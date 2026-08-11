@@ -1,73 +1,134 @@
-# KKVR Hand Hair Collider 0.5.0 validation
+# KKVR Hair and Clothing Interaction 0.6.1 validation
 
 ## Goal
 
-Make the original Koikatu VR VRTK left and right controller transforms act as
-spherical DynamicBone colliders for character hair and accessory DynamicBones.
-Controller velocity applies force only inside the controller sphere plus a
-small contact-padding shell. A head capsule is also bound to the hair to stop
-inward skull clipping. Character hand-bone colliders remain optional and are
-disabled by default.
+Make the original Koikatu VR VRTK controller transforms interact with hair,
+accessory, and skirt DynamicBones, plus garments that already use Unity Cloth.
+Keep forces local and bounded, preserve existing garment physics data, reuse
+installed body colliders, add a bounded controller-grip interaction, and recover
+cleanly after contact. Breast and hip physics remain native and out of scope.
+
+## Implementation evidence
+
+- Clothing discovery is restricted to `ChaControl.objClothes` slots 0 and 1,
+  matching the game's `Studio.AddObjectFemale.GetSkirtDynamic` boundary.
+- Skirt chains are recognized through the observed `cf_j_sk_*`, `cf_d_sk_*`,
+  `backsk`, and `spinesk` bone families. Bust, thigh, and accessory lookalikes
+  are rejected by focused tests.
+- All three installed DynamicBone variants are supported.
+- Controller contact uses at most 24 evenly distributed transforms per chain,
+  preserving both endpoints and preventing unbounded per-frame work.
+- Skirt force has independent conservative defaults: strength `0.012`, maximum
+  force `0.025`, controller radius `0.035 m`, and contact shell `0.008 m`.
+- Existing `KK_Colliders 1.3.1` thigh DynamicBoneColliders are reused. If they
+  are absent, six compatible upper/lower-thigh capsules are created.
+- Unity Cloth receives separate trigger spheres through appended
+  `ClothSphereColliderPair` entries. Existing sphere and capsule arrays are
+  preserved.
+- Disabling the plugin or controller collision disables the created controller
+  colliders and restores all transient force.
+- Non-finite tracking positions or velocities are ignored for the affected
+  frame instead of causing repeated Unity `Update` exceptions.
+- Grip reads the existing public `VRTK_ControllerEvents.gripPressed` state. It
+  latches the closest sampled point with its current relative offset, so the
+  first frame adds no pull or snap.
+- Grab pull uses a `0.005 m` dead zone, a `0.04` general cap, the lower `0.025`
+  skirt cap, and automatic release beyond `0.22 m` anchor error.
+- Existing `KK_Colliders` hand, forearm, and upper-arm colliders can be reused
+  by the optional character-arm path. Breast, hip, and leg names are excluded.
+- No `dictDynamicBoneBust` target is scanned and no breast/hip DynamicBone
+  parameter is read or written.
+
+## Research evidence
+
+- GitHub source inspection confirmed Koikatu's two-slot skirt search and
+  `cf_j_sk_*` chain layout.
+- Local asset inspection confirmed standard `cf_j_sk_00_00` through
+  `cf_j_sk_07_05`, deformation `cf_d_sk_*`, and back/spine skirt families.
+- Local `KK_Colliders.dll` IL confirmed its six leg-collider dimensions and
+  `ct_clothesBot` binding behavior.
+- Local Unity 5.6 metadata confirmed `Cloth.sphereColliders`,
+  `Cloth.capsuleColliders`, and both `ClothSphereColliderPair` constructors.
+- Local `Assembly-CSharp.dll` metadata and the matching upstream source both
+  confirmed `VRTK_ControllerEvents.gripPressed` as a public runtime field.
+- VRChat PhysBones documentation informed explicit collider lists, grabbing,
+  posing, maximum-stretch, and hand-collision semantics; no VRChat code was
+  copied.
 
 ## Automated evidence
 
-- RED 1: tests initially failed because `BindingPair` and `BindingPlanner` did
-  not exist.
-- GREEN 1: the binding cross-product, existing-binding skip, single-controller,
-  duplicate-input, and empty-input cases passed.
-- RED 2: controller-source tests initially failed because
-  `ColliderSourceSelector` did not exist.
-- GREEN 2: direct-controller priority, optional character hands, and source
-  deduplication passed.
-- RED 3: force-field tests failed because `ForceFieldMath` did not exist.
-- GREEN 3: distance falloff, slow-drift rejection, maximum-force limiting, and
-  outside-radius stopping passed.
-- RED 4: contact-model tests failed because the old force API had no separate
-  controller-radius and contact-padding inputs.
-- GREEN 4: full force inside the controller sphere, short-shell falloff, and
-  zero force outside the shell passed. Total: 12 passing tests.
-- Tuning 5: existing configs are migrated once to a 0.035 m controller sphere,
-  0.008 m contact shell, 0.15 m/s speed threshold, 0.018 strength, and 0.04
-  maximum force.
-- Recovery 5: transient DynamicBone force is restored immediately after
-  contact; after one quiet second particle positions are reset to prevent a
-  permanently raised hair state. Scene changes also clear transient force.
+- RED: the 0.6.1 suite initially failed because grab math and reusable-arm
+  collider classification did not exist.
+- GREEN: 22 of 22 focused tests pass.
+- The suite covers binding/source deduplication, slow-drift rejection, force
+  falloff and caps, skirt classification, invalid numeric input, nearest chain
+  samples, and contact-sample budgeting.
+- Deterministic physical-input simulation covers 16 seeds and 320,000 steps at
+  90 Hz. Every generated force stayed non-negative, local to the 0.043 m
+  interaction boundary, and at or below the `0.025` skirt cap.
+- A further 100,000-point grab sweep verified zero force inside the dead zone,
+  monotonic pull outside it, the `0.04` cap, and maximum-stretch release.
 - Release build: `net35`, 0 warnings, 0 errors.
-- Runtime: BepInEx loaded plugin version 0.5.0, plugin initialization completed,
-  the config file was generated, and `KoikatuVR.exe` remained responsive.
-- Original VR controller discovery: both VRTK controllers were found and each
-  received a DynamicBone collider.
-- Character scene: 20 hair DynamicBones were registered for velocity force and
-  received 60 controller/head bindings. One additional dynamic accessory bone
-  received three bindings.
-- Head collision: a head capsule was created for character 0 and bound to all
-  discovered hair DynamicBones.
-- Stability: no plugin exceptions were observed while the character scene was
-  running.
-- Migration evidence: the live config reports tuning version 2 and the expected
-  conservative values. The old `Influence radius meters` orphan is ignored.
-- Regression: 0 plugin occurrences of the prior `IReadOnlyList`,
-  `IteratorStateMachineAttribute`, `Array.Empty`, or missing-VRManager errors.
+- Assembly inspection: CLR `v2.0.50727`, plugin version `0.6.1`, and only
+  expected `mscorlib`, BepInEx, Assembly-CSharp, UnityEngine, and System.Core
+  references.
+- Diff check passed. The repository scan found no credential-like values.
+
+## Runtime smoke evidence
+
+- The release DLL was deployed while `KoikatuVR.exe` was not running.
+- Batch/nographics startup stayed alive for 40 seconds; normal VR startup stayed
+  alive for 45 seconds. Both were stopped by the exact PID started by the test.
+- BepInEx loaded `KKVR Hair and Clothing Interaction 0.6.1` in both runs.
+- The live config migrated to tuning version 4 and persisted enabled grab,
+  skirt, skirt-body, clothing-force, and Unity Cloth sections.
+- Plugin error lines: 0. No plugin `TypeLoadException`, `MissingMethodException`,
+  or character-binding failure was logged.
+- The deployed DLL matches the build SHA-256:
+  `FE5F6790B37150D01D21201E7928B048BBE1D250CA54DB9C40A4804D6D18914B`.
+- The preserved 0.6.0 backup SHA-256 is
+  `27FDA8FE621F6F16CAB50E36F049D7F9B48E41A843D042CC7FE60D3487A59795`.
+- The recovered 0.5 backup matches its GitHub Release SHA-256:
+  `3098DA8BE9E78C9DE32A13C4B9EF5B7EFF036D3FFD3A802A36E560BDFBC496A0`.
+- A `MoreAccessories` type-load warning remains in the wider mod environment;
+  it is not emitted by this plugin.
+
+The unattended 0.6.1 starts did not enter a character scene and did not discover
+the controllers before the observation windows ended. Therefore skirt target
+counts, Unity Cloth binding counts, grip latching, and headset visuals are not
+claimed as runtime-verified.
+
+## Prior 0.5 scene baseline
+
+The previous version's interactive scene log remains useful as a regression
+baseline only:
+
+- both original-VR VRTK controllers were discovered;
+- 20 hair DynamicBones and one accessory DynamicBone were observed;
+- controller/head bindings were added without plugin exceptions;
+- manual headset feedback confirmed visible near-contact hair movement.
+
+This evidence predates clothing support and does not verify 0.6 skirt behavior.
 
 ## Installed files
 
 - Plugin: `Koikatu/BepInEx/plugins/KKVRHandHairCollider/KKVRHandHairCollider.dll`
+- Backup: `Koikatu/BepInEx/plugins/KKVRHandHairCollider/KKVRHandHairCollider.0.5.0.dll.bak`
+- 0.6.0 backup: `Koikatu/BepInEx/plugins/KKVRHandHairCollider/KKVRHandHairCollider.0.6.0.dll.bak`
 - Config: `Koikatu/BepInEx/config/local.kkvr.handhaircollider.cfg`
 - Source and tests: `_codex_updates/KKVRHandHairCollider`
 
-## Visual-strength check
+## Remaining runtime observation
 
-Quest/SteamVR controller discovery, hair registration, and binding are now
-verified. The remaining check is subjective visible strength in the headset:
+For a later attended or scripted character-scene run, record these objective
+signals before making visual claims:
 
-1. Start `KoikatuVR.exe` and enter a scene containing a character with movable
-   bangs or side hair.
-2. Pass either controller slowly through the movable hair. No grip action is
-   required.
-3. Compare a quick sweep with holding the controller visibly away from the
-   hair. Movement should start only at near-contact distance.
-4. If hair still enters the skull, increase `Head collision > Radius meters`
-   from `0.095` to `0.11`; do not increase the controller force radius.
-
-The old prototype binaries are retained beside the installed DLL with a `.bak`
-suffix and are ignored by BepInEx.
+1. controller DynamicBone and Unity Cloth spheres are created;
+2. detected skirt DynamicBone and Unity Cloth counts are nonzero for a known
+   physics-enabled outfit;
+3. controller/body/hand-to-skirt bindings are added once with no duplicates;
+4. a near-contact sweep moves the touched chain and a distant sweep does not;
+5. grip near a chain latches without a first-frame jump, follows within the
+   configured cap, and releases on button-up or maximum stretch;
+6. the chain returns after one quiet second without remaining raised;
+7. no plugin exceptions occur during outfit changes or scene unload.

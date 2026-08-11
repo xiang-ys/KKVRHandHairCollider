@@ -102,11 +102,14 @@ namespace KKVRHandHairCollider.Core
             float falloffPadding,
             float minimumSpeed)
         {
-            if (colliderRadius < 0f) throw new ArgumentOutOfRangeException(nameof(colliderRadius));
-            if (falloffPadding <= 0f) throw new ArgumentOutOfRangeException(nameof(falloffPadding));
-            if (strength < 0f) throw new ArgumentOutOfRangeException(nameof(strength));
-            if (maximumForce < 0f) throw new ArgumentOutOfRangeException(nameof(maximumForce));
-            if (minimumSpeed < 0f) throw new ArgumentOutOfRangeException(nameof(minimumSpeed));
+            ValidateNonNegativeFinite(speed, nameof(speed));
+            ValidateNonNegativeFinite(strength, nameof(strength));
+            ValidateNonNegativeFinite(maximumForce, nameof(maximumForce));
+            ValidateNonNegativeFinite(distance, nameof(distance));
+            ValidateNonNegativeFinite(colliderRadius, nameof(colliderRadius));
+            ValidateNonNegativeFinite(minimumSpeed, nameof(minimumSpeed));
+            if (float.IsNaN(falloffPadding) || float.IsInfinity(falloffPadding) || falloffPadding <= 0f)
+                throw new ArgumentOutOfRangeException(nameof(falloffPadding));
 
             if (speed < minimumSpeed || distance >= colliderRadius + falloffPadding || maximumForce == 0f)
                 return 0f;
@@ -114,6 +117,159 @@ namespace KKVRHandHairCollider.Core
             var outsideCollider = Math.Max(0f, distance - colliderRadius);
             var influence = 1f - outsideCollider / falloffPadding;
             return Math.Min(speed * strength * influence, maximumForce);
+        }
+
+        public static float ComputeMagnitudeForSamples(
+            float speed,
+            float strength,
+            float maximumForce,
+            IEnumerable<float> distances,
+            float colliderRadius,
+            float falloffPadding,
+            float minimumSpeed)
+        {
+            if (distances == null) throw new ArgumentNullException(nameof(distances));
+
+            var minimumDistance = float.MaxValue;
+            var hasSamples = false;
+            foreach (var distance in distances)
+            {
+                ValidateNonNegativeFinite(distance, nameof(distances));
+                minimumDistance = Math.Min(minimumDistance, distance);
+                hasSamples = true;
+            }
+
+            if (!hasSamples)
+                return 0f;
+
+            return ComputeMagnitude(
+                speed,
+                strength,
+                maximumForce,
+                minimumDistance,
+                colliderRadius,
+                falloffPadding,
+                minimumSpeed);
+        }
+
+        private static void ValidateNonNegativeFinite(float value, string parameterName)
+        {
+            if (float.IsNaN(value) || float.IsInfinity(value) || value < 0f)
+                throw new ArgumentOutOfRangeException(parameterName);
+        }
+    }
+
+    public static class SkirtTargetClassifier
+    {
+        public static bool IsSkirtBoneName(string boneName)
+        {
+            if (string.IsNullOrEmpty(boneName))
+                return false;
+
+            return boneName.StartsWith("cf_j_sk_", StringComparison.OrdinalIgnoreCase) ||
+                   boneName.StartsWith("cf_d_sk_", StringComparison.OrdinalIgnoreCase) ||
+                   boneName.IndexOf("_backsk_", StringComparison.OrdinalIgnoreCase) >= 0 ||
+                   boneName.IndexOf("_spinesk_", StringComparison.OrdinalIgnoreCase) >= 0;
+        }
+    }
+
+    public static class ContactSamplePlanner
+    {
+        public static IList<int> PlanIndices(int sampleCount, int maximumSamples)
+        {
+            if (sampleCount < 0) throw new ArgumentOutOfRangeException(nameof(sampleCount));
+            if (maximumSamples <= 0) throw new ArgumentOutOfRangeException(nameof(maximumSamples));
+
+            var result = new List<int>(Math.Min(sampleCount, maximumSamples));
+            if (sampleCount == 0)
+                return result;
+            if (sampleCount <= maximumSamples)
+            {
+                for (var index = 0; index < sampleCount; index++)
+                    result.Add(index);
+                return result;
+            }
+            if (maximumSamples == 1)
+            {
+                result.Add(sampleCount - 1);
+                return result;
+            }
+
+            for (var index = 0; index < maximumSamples; index++)
+            {
+                var sourceIndex = (int)Math.Round(
+                    index * (sampleCount - 1d) / (maximumSamples - 1d));
+                if (result.Count == 0 || result[result.Count - 1] != sourceIndex)
+                    result.Add(sourceIndex);
+            }
+
+            return result;
+        }
+    }
+
+    public static class GrabInteractionMath
+    {
+        public static bool CanLatch(float distance, float maximumDistance)
+        {
+            ValidateNonNegativeFinite(distance, nameof(distance));
+            ValidatePositiveFinite(maximumDistance, nameof(maximumDistance));
+            return distance <= maximumDistance;
+        }
+
+        public static float ComputePullMagnitude(
+            float displacement,
+            float strength,
+            float maximumForce,
+            float deadZone)
+        {
+            ValidateNonNegativeFinite(displacement, nameof(displacement));
+            ValidateNonNegativeFinite(strength, nameof(strength));
+            ValidateNonNegativeFinite(maximumForce, nameof(maximumForce));
+            ValidateNonNegativeFinite(deadZone, nameof(deadZone));
+
+            if (displacement <= deadZone || strength == 0f || maximumForce == 0f)
+                return 0f;
+
+            return Math.Min((displacement - deadZone) * strength, maximumForce);
+        }
+
+        public static bool ExceedsMaximumStretch(float displacement, float maximumStretch)
+        {
+            ValidateNonNegativeFinite(displacement, nameof(displacement));
+            ValidatePositiveFinite(maximumStretch, nameof(maximumStretch));
+            return displacement > maximumStretch;
+        }
+
+        private static void ValidateNonNegativeFinite(float value, string parameterName)
+        {
+            if (float.IsNaN(value) || float.IsInfinity(value) || value < 0f)
+                throw new ArgumentOutOfRangeException(parameterName);
+        }
+
+        private static void ValidatePositiveFinite(float value, string parameterName)
+        {
+            if (float.IsNaN(value) || float.IsInfinity(value) || value <= 0f)
+                throw new ArgumentOutOfRangeException(parameterName);
+        }
+    }
+
+    public static class CharacterColliderClassifier
+    {
+        private static readonly HashSet<string> ReusableArmColliderNames = new HashSet<string>(StringComparer.Ordinal)
+        {
+            "Colliders_cf_s_hand_L",
+            "Colliders_cf_s_hand_R",
+            "Colliders_cf_s_forearm02_L",
+            "Colliders_cf_s_forearm02_R",
+            "Colliders_cf_s_arm02_L",
+            "Colliders_cf_s_arm02_R",
+            "KKVRHandHairCollider_cf_s_hand_L",
+            "KKVRHandHairCollider_cf_s_hand_R"
+        };
+
+        public static bool IsReusableArmColliderName(string colliderName)
+        {
+            return colliderName != null && ReusableArmColliderNames.Contains(colliderName);
         }
     }
 }

@@ -14,19 +14,24 @@ namespace KKVRHandHairCollider
     public class Plugin : BaseUnityPlugin
     {
         public const string Guid = "local.kkvr.handhaircollider";
-        public const string Name = "KKVR Hand Hair Collider Prototype";
-        public const string Version = "0.5.0";
+        public const string Name = "KKVR Hair and Clothing Interaction";
+        public const string Version = "0.6.1";
 
-        private static readonly string[] ExistingColliderNames =
+        private const int MaximumContactSamplesPerTarget = 24;
+
+        private static readonly SkirtColliderSpec[] SkirtColliderSpecs =
         {
-            "Colliders_cf_s_hand_L",
-            "Colliders_cf_s_hand_R",
-            "KKVRHandHairCollider_cf_s_hand_L",
-            "KKVRHandHairCollider_cf_s_hand_R"
+            new SkirtColliderSpec("cf_s_thigh01_L", "L_UpperOuter", 0.095f, 0.32f, new Vector3(0.05f, -0.10f, -0.015f)),
+            new SkirtColliderSpec("cf_s_thigh01_L", "L_UpperInner", 0.095f, 0.32f, new Vector3(0.01f, -0.125f, -0.015f)),
+            new SkirtColliderSpec("cf_s_thigh01_R", "R_UpperOuter", 0.095f, 0.32f, new Vector3(-0.05f, -0.10f, -0.015f)),
+            new SkirtColliderSpec("cf_s_thigh01_R", "R_UpperInner", 0.095f, 0.32f, new Vector3(-0.01f, -0.125f, -0.015f)),
+            new SkirtColliderSpec("cf_s_thigh02_L", "L_Lower", 0.083f, 0.35f, new Vector3(-0.0065f, 0f, -0.012f)),
+            new SkirtColliderSpec("cf_s_thigh02_R", "R_Lower", 0.083f, 0.35f, new Vector3(0.0065f, 0f, -0.012f))
         };
 
         private ConfigEntry<bool> _enabled;
         private ConfigEntry<bool> _includeAccessories;
+        private ConfigEntry<bool> _includeClothing;
         private ConfigEntry<bool> _controllerCollidersEnabled;
         private ConfigEntry<float> _controllerRadius;
         private ConfigEntry<bool> _controllerForceEnabled;
@@ -35,22 +40,37 @@ namespace KKVRHandHairCollider
         private ConfigEntry<float> _maximumForce;
         private ConfigEntry<float> _minimumControllerSpeed;
         private ConfigEntry<float> _velocitySmoothing;
+        private ConfigEntry<bool> _clothingForceEnabled;
+        private ConfigEntry<float> _clothingForceStrength;
+        private ConfigEntry<float> _clothingMaximumForce;
+        private ConfigEntry<bool> _grabEnabled;
+        private ConfigEntry<float> _grabStrength;
+        private ConfigEntry<float> _grabMaximumForce;
+        private ConfigEntry<float> _grabDeadZone;
+        private ConfigEntry<float> _grabMaximumStretch;
         private ConfigEntry<bool> _includeCharacterHandColliders;
         private ConfigEntry<bool> _createFallbackColliders;
         private ConfigEntry<bool> _headColliderEnabled;
         private ConfigEntry<float> _headColliderRadius;
         private ConfigEntry<float> _headColliderHeight;
         private ConfigEntry<float> _headColliderCenterY;
+        private ConfigEntry<bool> _skirtBodyCollidersEnabled;
+        private ConfigEntry<bool> _unityClothEnabled;
         private ConfigEntry<float> _scanInterval;
         private ConfigEntry<int> _tuningVersion;
         private float _nextScan;
         private bool _initialized;
         private DynamicBoneCollider _leftControllerCollider;
         private DynamicBoneCollider _rightControllerCollider;
+        private SphereCollider _leftControllerClothCollider;
+        private SphereCollider _rightControllerClothCollider;
         private readonly ControllerMotionState _leftControllerMotion = new ControllerMotionState();
         private readonly ControllerMotionState _rightControllerMotion = new ControllerMotionState();
+        private readonly GrabState _leftGrab = new GrabState();
+        private readonly GrabState _rightGrab = new GrabState();
         private readonly Dictionary<string, DynamicBoneTarget> _forceTargets = new Dictionary<string, DynamicBoneTarget>(StringComparer.Ordinal);
         private bool _controllerLookupWarningLogged;
+        private bool _grabInputWarningLogged;
 
         private void Awake() => Initialize();
 
@@ -63,8 +83,9 @@ namespace KKVRHandHairCollider
             if (_initialized)
                 return;
 
-            _enabled = Config.Bind("General", "Enabled", true, "Attach character hand colliders to hair Dynamic Bones.");
+            _enabled = Config.Bind("General", "Enabled", true, "Enable controller interaction with supported hair, accessories, and clothing.");
             _includeAccessories = Config.Bind("General", "Include accessory Dynamic Bones", true, "Also bind hand colliders to accessory Dynamic Bones.");
+            _includeClothing = Config.Bind("General", "Include skirt Dynamic Bones", true, "Bind controllers to skirt chains found in the top and bottom clothing slots.");
             _controllerCollidersEnabled = Config.Bind("Controller collision", "Enabled", true, "Use the tracked VR controllers as Dynamic Bone colliders.");
             _controllerRadius = Config.Bind("Controller collision", "Radius meters", 0.035f, new ConfigDescription("Radius of each spherical controller collider.", new AcceptableValueRange<float>(0.015f, 0.12f)));
             _controllerForceEnabled = Config.Bind("Controller force", "Enabled", true, "Apply controller-velocity force to nearby hair Dynamic Bones.");
@@ -73,51 +94,83 @@ namespace KKVRHandHairCollider
             _maximumForce = Config.Bind("Controller force", "Maximum force", 0.04f, new ConfigDescription("Safety cap for the force applied to one Dynamic Bone.", new AcceptableValueRange<float>(0.02f, 0.30f)));
             _minimumControllerSpeed = Config.Bind("Controller force", "Minimum speed meters per second", 0.15f, new ConfigDescription("Controller movement slower than this is treated as tracking drift.", new AcceptableValueRange<float>(0f, 0.50f)));
             _velocitySmoothing = Config.Bind("Controller force", "Velocity smoothing", 0.35f, new ConfigDescription("Higher values reduce tracking jitter but soften sudden motion.", new AcceptableValueRange<float>(0f, 0.95f)));
+            _clothingForceEnabled = Config.Bind("Clothing force", "Enabled", true, "Apply conservative controller-velocity force to nearby skirt chains.");
+            _clothingForceStrength = Config.Bind("Clothing force", "Strength", 0.012f, new ConfigDescription("Force generated per meter/second for skirt chains.", new AcceptableValueRange<float>(0.002f, 0.10f)));
+            _clothingMaximumForce = Config.Bind("Clothing force", "Maximum force", 0.025f, new ConfigDescription("Safety cap for force applied to one skirt Dynamic Bone.", new AcceptableValueRange<float>(0.005f, 0.15f)));
+            _grabEnabled = Config.Bind("Grab interaction", "Enabled", true, "Hold the controller grip near hair, accessories, or skirt chains to pull them without replacing their physics.");
+            _grabStrength = Config.Bind("Grab interaction", "Strength", 0.20f, new ConfigDescription("Bounded pull force per meter moved after a chain is grabbed.", new AcceptableValueRange<float>(0.02f, 1.0f)));
+            _grabMaximumForce = Config.Bind("Grab interaction", "Maximum force", 0.04f, new ConfigDescription("Safety cap for grab force; skirt chains retain their lower clothing force cap.", new AcceptableValueRange<float>(0.01f, 0.15f)));
+            _grabDeadZone = Config.Bind("Grab interaction", "Dead zone meters", 0.005f, new ConfigDescription("Controller movement ignored after latching to prevent tracking jitter.", new AcceptableValueRange<float>(0f, 0.03f)));
+            _grabMaximumStretch = Config.Bind("Grab interaction", "Maximum stretch meters", 0.22f, new ConfigDescription("Release a grabbed chain when its anchor error exceeds this distance.", new AcceptableValueRange<float>(0.08f, 0.50f)));
             _includeCharacterHandColliders = Config.Bind("Character hands", "Include character hand colliders", false, "Also bind colliders attached to the character's hand bones.");
             _createFallbackColliders = Config.Bind("Character hands", "Create fallback hand colliders", true, "Create character hand colliders when KK_Colliders has not created them.");
             _headColliderEnabled = Config.Bind("Head collision", "Enabled", true, "Prevent hair Dynamic Bones from passing through the character's head.");
             _headColliderRadius = Config.Bind("Head collision", "Radius meters", 0.075f, new ConfigDescription("Radius of the head capsule collider.", new AcceptableValueRange<float>(0.05f, 0.16f)));
             _headColliderHeight = Config.Bind("Head collision", "Height meters", 0.10f, new ConfigDescription("Height of the head capsule collider along its local Y axis.", new AcceptableValueRange<float>(0f, 0.25f)));
             _headColliderCenterY = Config.Bind("Head collision", "Center Y meters", 0.015f, new ConfigDescription("Vertical offset of the head collider on the head bone.", new AcceptableValueRange<float>(-0.10f, 0.10f)));
+            _skirtBodyCollidersEnabled = Config.Bind("Skirt body collision", "Enabled", true, "Reuse or create thigh colliders so skirt chains stay outside the body.");
+            _unityClothEnabled = Config.Bind("Unity Cloth", "Enabled", true, "Append controller spheres to clothing that uses Unity Cloth instead of Dynamic Bones.");
             _scanInterval = Config.Bind("General", "Scan interval seconds", 1.0f, new ConfigDescription("How often loaded characters are checked.", new AcceptableValueRange<float>(0.25f, 10f)));
             _tuningVersion = Config.Bind("General", "Tuning version", 0, "Internal parameter migration version.");
             MigrateTuning();
             Config.Save();
             _initialized = true;
-            Logger.LogMessage("Direct-controller prototype loaded; waiting for VR controllers and characters.");
+            Logger.LogMessage("Controller hair/clothing collision, force, and grip interaction loaded; waiting for VR controllers and characters.");
         }
 
         private void MigrateTuning()
         {
-            if (_tuningVersion.Value >= 2)
-                return;
+            if (_tuningVersion.Value < 2)
+            {
+                _controllerRadius.Value = 0.035f;
+                _forceContactPadding.Value = 0.008f;
+                _forceStrength.Value = 0.018f;
+                _maximumForce.Value = 0.04f;
+                _minimumControllerSpeed.Value = 0.15f;
+                _headColliderRadius.Value = 0.075f;
+                _headColliderHeight.Value = 0.10f;
+                _headColliderCenterY.Value = 0.015f;
+                Logger.LogMessage("Applied conservative contact tuning: smaller controller sphere, shorter force shell, and smaller head capsule.");
+            }
 
-            _controllerRadius.Value = 0.035f;
-            _forceContactPadding.Value = 0.008f;
-            _forceStrength.Value = 0.018f;
-            _maximumForce.Value = 0.04f;
-            _minimumControllerSpeed.Value = 0.15f;
-            _headColliderRadius.Value = 0.075f;
-            _headColliderHeight.Value = 0.10f;
-            _headColliderCenterY.Value = 0.015f;
-            _tuningVersion.Value = 2;
-            Logger.LogMessage("Applied conservative contact tuning: smaller controller sphere, shorter force shell, and smaller head capsule.");
+            if (_tuningVersion.Value < 3)
+            {
+                _clothingForceStrength.Value = 0.012f;
+                _clothingMaximumForce.Value = 0.025f;
+                _tuningVersion.Value = 3;
+                Logger.LogMessage("Applied conservative skirt tuning with a lower force cap than hair.");
+            }
+
+            if (_tuningVersion.Value < 4)
+            {
+                _grabStrength.Value = 0.20f;
+                _grabMaximumForce.Value = 0.04f;
+                _grabDeadZone.Value = 0.005f;
+                _grabMaximumStretch.Value = 0.22f;
+                _tuningVersion.Value = 4;
+                Logger.LogMessage("Applied bounded grip tuning with no-snap anchoring and automatic stretch release.");
+            }
         }
 
         private void Update()
         {
             Initialize();
-            if (!_enabled.Value || Time.unscaledTime < _nextScan)
+            if (!_enabled.Value)
             {
-                if (!_enabled.Value)
-                    ResetAllForces();
-                else
-                    ApplyControllerForces();
+                SetControllerColliderState(false, false);
+                ResetAllForces();
+                return;
+            }
+
+            SetControllerColliderState(_controllerCollidersEnabled.Value, _unityClothEnabled.Value);
+            if (Time.unscaledTime < _nextScan)
+            {
+                ApplyControllerForces();
                 return;
             }
 
             _nextScan = Time.unscaledTime + _scanInterval.Value;
-            var controllerColliders = _controllerCollidersEnabled.Value || _controllerForceEnabled.Value
+            var controllerColliders = _controllerCollidersEnabled.Value || _controllerForceEnabled.Value || _grabEnabled.Value || _unityClothEnabled.Value
                 ? EnsureControllerColliders(_controllerCollidersEnabled.Value)
                 : new List<DynamicBoneCollider>();
 
@@ -149,20 +202,48 @@ namespace KKVRHandHairCollider
                     characterHandColliders.AddRange(CreateFallbackHandColliders(character));
             }
 
-            var colliders = ColliderSourceSelector.Select(
+            var hairColliders = ColliderSourceSelector.Select(
                     AddHeadCollider(controllerColliders, _headColliderEnabled.Value ? EnsureHeadCollider(character) : null),
                     characterHandColliders,
                     _includeCharacterHandColliders.Value)
                 .Where(collider => collider != null)
                 .ToList();
 
-            var targets = FindHairTargets(character);
-            if (targets.Count == 0)
+            var hairTargets = FindHairTargets(character);
+            RegisterForceTargets(hairTargets.Values, "hair/accessory");
+            BindTargets(character, hairTargets, hairColliders, "controller/head/hand-to-hair");
+
+            if (_includeClothing.Value && _unityClothEnabled.Value)
+                BindUnityCloth(character);
+
+            if (!_includeClothing.Value)
                 return;
 
-            RegisterForceTargets(targets.Values);
+            var skirtTargets = FindSkirtTargets(character);
+            if (skirtTargets.Count == 0)
+                return;
 
-            if (colliders.Count == 0)
+            var skirtBodyColliders = _skirtBodyCollidersEnabled.Value
+                ? EnsureSkirtBodyColliders(character)
+                : new List<DynamicBoneCollider>();
+            var skirtColliders = ColliderSourceSelector.Select(
+                    controllerColliders.Concat(skirtBodyColliders),
+                    characterHandColliders,
+                    _includeCharacterHandColliders.Value)
+                .Where(collider => collider != null)
+                .ToList();
+
+            RegisterForceTargets(skirtTargets.Values, "skirt");
+            BindTargets(character, skirtTargets, skirtColliders, "controller/body/hand-to-skirt");
+        }
+
+        private void BindTargets(
+            ChaControl character,
+            IDictionary<string, DynamicBoneTarget> targets,
+            IList<DynamicBoneCollider> colliders,
+            string bindingLabel)
+        {
+            if (targets.Count == 0 || colliders.Count == 0)
                 return;
 
             var existing = new List<BindingPair>();
@@ -181,7 +262,51 @@ namespace KKVRHandHairCollider
                 targets[pair.DynamicBoneId].Add(colliderById[pair.ColliderId]);
 
             if (planned.Count > 0)
-                Logger.LogInfo($"Character {character.chaID}: added {planned.Count} controller/head/hand-to-hair bindings across {targets.Count} Dynamic Bones.");
+                Logger.LogInfo($"Character {character.chaID}: added {planned.Count} {bindingLabel} bindings across {targets.Count} Dynamic Bones.");
+        }
+
+        private void BindUnityCloth(ChaControl character)
+        {
+            var clothes = character.objClothes;
+            if (clothes == null)
+                return;
+
+            var added = 0;
+            var clothCount = 0;
+            foreach (var root in clothes)
+            {
+                if (root == null)
+                    continue;
+
+                foreach (var cloth in root.GetComponentsInChildren<Cloth>(true))
+                {
+                    if (cloth == null)
+                        continue;
+
+                    clothCount++;
+                    added += AddClothSphere(cloth, _leftControllerClothCollider);
+                    added += AddClothSphere(cloth, _rightControllerClothCollider);
+                }
+            }
+
+            if (added > 0)
+                Logger.LogInfo($"Character {character.chaID}: added {added} controller sphere bindings across {clothCount} Unity Cloth components.");
+        }
+
+        private static int AddClothSphere(Cloth cloth, SphereCollider collider)
+        {
+            if (collider == null)
+                return 0;
+
+            var existing = cloth.sphereColliders ?? new ClothSphereColliderPair[0];
+            if (existing.Any(pair => pair.first == collider || pair.second == collider))
+                return 0;
+
+            var updated = new ClothSphereColliderPair[existing.Length + 1];
+            Array.Copy(existing, updated, existing.Length);
+            updated[existing.Length] = new ClothSphereColliderPair(collider);
+            cloth.sphereColliders = updated;
+            return 1;
         }
 
         private static IList<DynamicBoneCollider> AddHeadCollider(IList<DynamicBoneCollider> controllerColliders, DynamicBoneCollider headCollider)
@@ -228,14 +353,31 @@ namespace KKVRHandHairCollider
                 }
             }
 
-            _leftControllerMotion.SetTransform(leftController == null ? null : leftController.transform);
-            _rightControllerMotion.SetTransform(rightController == null ? null : rightController.transform);
+            _leftControllerMotion.SetController(leftController);
+            _rightControllerMotion.SetController(rightController);
+            if (_grabEnabled.Value &&
+                (_leftControllerMotion.IsAvailable || _rightControllerMotion.IsAvailable) &&
+                !_leftControllerMotion.HasGripInput && !_rightControllerMotion.HasGripInput)
+            {
+                if (!_grabInputWarningLogged)
+                {
+                    Logger.LogWarning("VR controllers were found without VRTK_ControllerEvents; collision and velocity force remain active, but grip interaction is unavailable.");
+                    _grabInputWarningLogged = true;
+                }
+            }
+            else if (_leftControllerMotion.HasGripInput || _rightControllerMotion.HasGripInput)
+            {
+                _grabInputWarningLogged = false;
+            }
 
-            if (!createColliders)
-                return result;
+            EnsureControllerClothCollider(leftController, "L", ref _leftControllerClothCollider);
+            EnsureControllerClothCollider(rightController, "R", ref _rightControllerClothCollider);
 
-            AddControllerCollider(leftController, "L", ref _leftControllerCollider, result);
-            AddControllerCollider(rightController, "R", ref _rightControllerCollider, result);
+            if (createColliders)
+            {
+                AddControllerCollider(leftController, "L", ref _leftControllerCollider, result);
+                AddControllerCollider(rightController, "R", ref _rightControllerCollider, result);
+            }
             return result;
         }
 
@@ -279,7 +421,48 @@ namespace KKVRHandHairCollider
             collider.m_Center = Vector3.zero;
             collider.m_Radius = _controllerRadius.Value;
             collider.m_Height = 0f;
+            collider.enabled = true;
             result.Add(collider);
+        }
+
+        private void EnsureControllerClothCollider(
+            GameObject controller,
+            string side,
+            ref SphereCollider collider)
+        {
+            if (!_unityClothEnabled.Value || controller == null || controller.transform == null)
+                return;
+
+            var expectedName = $"KKVRHandHairCollider_UnityCloth_{side}";
+            if (collider == null || collider.transform.parent != controller.transform)
+            {
+                collider = controller.GetComponentsInChildren<SphereCollider>(true)
+                    .FirstOrDefault(item => item.gameObject.name == expectedName);
+                if (collider == null)
+                {
+                    var colliderObject = new GameObject(expectedName);
+                    colliderObject.transform.SetParent(controller.transform, false);
+                    collider = colliderObject.AddComponent<SphereCollider>();
+                    Logger.LogMessage($"Created Unity Cloth interaction sphere for controller {side} on {controller.name}.");
+                }
+            }
+
+            collider.center = Vector3.zero;
+            collider.radius = _controllerRadius.Value;
+            collider.isTrigger = true;
+            collider.enabled = true;
+        }
+
+        private void SetControllerColliderState(bool dynamicBoneEnabled, bool clothEnabled)
+        {
+            if (_leftControllerCollider != null)
+                _leftControllerCollider.enabled = dynamicBoneEnabled;
+            if (_rightControllerCollider != null)
+                _rightControllerCollider.enabled = dynamicBoneEnabled;
+            if (_leftControllerClothCollider != null)
+                _leftControllerClothCollider.enabled = clothEnabled;
+            if (_rightControllerClothCollider != null)
+                _rightControllerClothCollider.enabled = clothEnabled;
         }
 
         private DynamicBoneCollider EnsureHeadCollider(ChaControl character)
@@ -311,6 +494,43 @@ namespace KKVRHandHairCollider
             return collider;
         }
 
+        private List<DynamicBoneCollider> EnsureSkirtBodyColliders(ChaControl character)
+        {
+            var result = new List<DynamicBoneCollider>();
+            foreach (var group in SkirtColliderSpecs.GroupBy(spec => spec.BoneName))
+            {
+                var bone = FindTransform(character.transform, group.Key);
+                if (bone == null)
+                    continue;
+
+                var existing = bone.GetComponentsInChildren<DynamicBoneCollider>(true)
+                    .Where(collider => collider != null && collider.transform.parent == bone)
+                    .ToList();
+                if (existing.Count > 0)
+                {
+                    result.AddRange(existing);
+                    continue;
+                }
+
+                foreach (var spec in group)
+                {
+                    var colliderObject = new GameObject($"KKVRHandHairCollider_SkirtBody_{spec.NameSuffix}");
+                    colliderObject.transform.SetParent(bone, false);
+                    var collider = colliderObject.AddComponent<DynamicBoneCollider>();
+                    collider.m_Radius = spec.Radius;
+                    collider.m_Height = spec.Height;
+                    collider.m_Center = spec.Center;
+                    collider.m_Direction = DynamicBoneCollider.Direction.Y;
+                    collider.m_Bound = DynamicBoneCollider.Bound.Outside;
+                    result.Add(collider);
+                }
+
+                Logger.LogMessage($"Created {group.Count()} fallback skirt body colliders on {group.Key} for character {character.chaID}.");
+            }
+
+            return result.GroupBy(ColliderId).Select(group => group.First()).ToList();
+        }
+
         private static Transform FindFirstNamedTransform(Transform root, params string[] names)
         {
             foreach (var name in names)
@@ -323,7 +543,7 @@ namespace KKVRHandHairCollider
             return null;
         }
 
-        private void RegisterForceTargets(IEnumerable<DynamicBoneTarget> targets)
+        private void RegisterForceTargets(IEnumerable<DynamicBoneTarget> targets, string targetLabel)
         {
             var added = 0;
             foreach (var target in targets)
@@ -336,12 +556,12 @@ namespace KKVRHandHairCollider
             }
 
             if (added > 0)
-                Logger.LogInfo($"Registered {added} hair Dynamic Bones for controller velocity force.");
+                Logger.LogInfo($"Registered {added} {targetLabel} Dynamic Bones for controller velocity force.");
         }
 
         private void ApplyControllerForces()
         {
-            if (!_controllerForceEnabled.Value || _forceTargets.Count == 0)
+            if ((!_controllerForceEnabled.Value && !_grabEnabled.Value) || _forceTargets.Count == 0)
             {
                 ResetAllForces();
                 return;
@@ -350,24 +570,33 @@ namespace KKVRHandHairCollider
             var deltaTime = Time.unscaledDeltaTime;
             _leftControllerMotion.Sample(deltaTime, _velocitySmoothing.Value);
             _rightControllerMotion.Sample(deltaTime, _velocitySmoothing.Value);
+            UpdateGrab(_leftControllerMotion, _leftGrab);
+            UpdateGrab(_rightControllerMotion, _rightGrab);
 
             var staleTargetIds = new List<string>();
             foreach (var entry in _forceTargets)
             {
                 var target = entry.Value;
-                Vector3 targetPosition;
-                if (!target.TryGetPosition(out targetPosition))
+                if (!target.IsAlive)
                 {
                     target.ResetForce();
-                    if (!target.IsAlive)
-                        staleTargetIds.Add(entry.Key);
+                    staleTargetIds.Add(entry.Key);
                     continue;
                 }
 
-                var force = CalculateControllerForce(_leftControllerMotion, targetPosition) +
-                            CalculateControllerForce(_rightControllerMotion, targetPosition);
-                if (force.sqrMagnitude > _maximumForce.Value * _maximumForce.Value)
-                    force = force.normalized * _maximumForce.Value;
+                var strength = target.IsClothing ? _clothingForceStrength.Value : _forceStrength.Value;
+                var maximumForce = target.IsClothing ? _clothingMaximumForce.Value : _maximumForce.Value;
+                var velocityForceEnabled = _controllerForceEnabled.Value &&
+                                           (!target.IsClothing || _clothingForceEnabled.Value);
+                var force = velocityForceEnabled
+                    ? CalculateControllerForce(_leftControllerMotion, target, strength, maximumForce) +
+                      CalculateControllerForce(_rightControllerMotion, target, strength, maximumForce)
+                    : Vector3.zero;
+                var grabMaximumForce = Math.Min(maximumForce, _grabMaximumForce.Value);
+                force += CalculateGrabForce(_leftControllerMotion, _leftGrab, target, grabMaximumForce);
+                force += CalculateGrabForce(_rightControllerMotion, _rightGrab, target, grabMaximumForce);
+                if (force.sqrMagnitude > maximumForce * maximumForce)
+                    force = force.normalized * maximumForce;
 
                 if (force.sqrMagnitude > 0f)
                     target.ApplyForce(force);
@@ -379,17 +608,98 @@ namespace KKVRHandHairCollider
                 _forceTargets.Remove(targetId);
         }
 
-        private Vector3 CalculateControllerForce(ControllerMotionState controller, Vector3 targetPosition)
+        private void UpdateGrab(ControllerMotionState controller, GrabState grab)
+        {
+            if (!_grabEnabled.Value || !controller.IsAvailable || !controller.GripPressed)
+            {
+                grab.Release();
+                return;
+            }
+
+            if (grab.IsActive)
+            {
+                if (!grab.Target.IsAlive || grab.Sample == null)
+                {
+                    grab.Release();
+                }
+                else
+                {
+                    var displacement = (controller.Position + grab.ControllerToSampleOffset - grab.Sample.position).magnitude;
+                    if (IsFinite(displacement) &&
+                        !GrabInteractionMath.ExceedsMaximumStretch(displacement, _grabMaximumStretch.Value))
+                        return;
+                    grab.Release();
+                }
+            }
+
+            DynamicBoneTarget nearestTarget = null;
+            Transform nearestSample = null;
+            var nearestDistance = float.MaxValue;
+            foreach (var target in _forceTargets.Values)
+            {
+                if (!target.IsAlive)
+                    continue;
+
+                Transform sample;
+                float distance;
+                if (!target.TryGetClosestSample(controller.Position, out sample, out distance) ||
+                    distance >= nearestDistance)
+                    continue;
+
+                nearestTarget = target;
+                nearestSample = sample;
+                nearestDistance = distance;
+            }
+
+            var latchDistance = _controllerRadius.Value + _forceContactPadding.Value;
+            if (nearestTarget != null &&
+                GrabInteractionMath.CanLatch(nearestDistance, latchDistance))
+                grab.Latch(nearestTarget, nearestSample, controller.Position);
+        }
+
+        private Vector3 CalculateGrabForce(
+            ControllerMotionState controller,
+            GrabState grab,
+            DynamicBoneTarget target,
+            float maximumForce)
+        {
+            if (!_grabEnabled.Value || !grab.IsActive || grab.Target != target || grab.Sample == null)
+                return Vector3.zero;
+
+            var displacement = controller.Position + grab.ControllerToSampleOffset - grab.Sample.position;
+            var distance = displacement.magnitude;
+            if (!IsFinite(distance) || distance <= 0f)
+                return Vector3.zero;
+
+            var magnitude = GrabInteractionMath.ComputePullMagnitude(
+                distance,
+                _grabStrength.Value,
+                maximumForce,
+                _grabDeadZone.Value);
+            return magnitude <= 0f ? Vector3.zero : displacement / distance * magnitude;
+        }
+
+        private Vector3 CalculateControllerForce(
+            ControllerMotionState controller,
+            DynamicBoneTarget target,
+            float strength,
+            float maximumForce)
         {
             if (!controller.IsAvailable)
                 return Vector3.zero;
 
             var speed = controller.Velocity.magnitude;
-            var distance = Vector3.Distance(controller.Position, targetPosition);
+            if (!IsFinite(speed))
+                return Vector3.zero;
+
+            float distance;
+            if (!target.TryGetMinimumDistance(controller.Position, out distance))
+                return Vector3.zero;
+
             var magnitude = ForceFieldMath.ComputeMagnitude(
                 speed,
-                _forceStrength.Value,
-                _maximumForce.Value,
+                strength,
+                maximumForce,
                 distance,
                 _controllerRadius.Value,
                 _forceContactPadding.Value,
@@ -401,20 +711,30 @@ namespace KKVRHandHairCollider
 
         private void ResetAllForces()
         {
+            _leftGrab.Release();
+            _rightGrab.Release();
             foreach (var target in _forceTargets.Values)
                 target.ResetForce();
         }
 
-        private void OnDisable() => ResetAllForces();
+        private void OnDisable()
+        {
+            SetControllerColliderState(false, false);
+            ResetAllForces();
+        }
 
-        private void OnDestroy() => ResetAllForces();
+        private void OnDestroy()
+        {
+            SetControllerColliderState(false, false);
+            ResetAllForces();
+        }
 
         private void OnLevelWasLoaded(int level) => ResetAllForces();
 
         private List<DynamicBoneCollider> FindHandColliders(ChaControl character)
         {
             return character.GetComponentsInChildren<DynamicBoneCollider>(true)
-                .Where(collider => ExistingColliderNames.Contains(collider.gameObject.name, StringComparer.Ordinal))
+                .Where(collider => CharacterColliderClassifier.IsReusableArmColliderName(collider.gameObject.name))
                 .GroupBy(ColliderId)
                 .Select(group => group.First())
                 .ToList();
@@ -453,6 +773,58 @@ namespace KKVRHandHairCollider
             return result;
         }
 
+        private static Dictionary<string, DynamicBoneTarget> FindSkirtTargets(ChaControl character)
+        {
+            var result = new Dictionary<string, DynamicBoneTarget>(StringComparer.Ordinal);
+            var clothes = character.objClothes;
+            if (clothes == null)
+                return result;
+
+            var slotCount = Math.Min(2, clothes.Length);
+            for (var slot = 0; slot < slotCount; slot++)
+            {
+                var root = clothes[slot];
+                if (root == null)
+                    continue;
+
+                foreach (var bone in root.GetComponentsInChildren<DynamicBone>(true))
+                {
+                    if (ContainsSkirtBone(bone.m_Root))
+                        AddTarget(result, DynamicBoneTarget.For(bone, true));
+                }
+
+                foreach (var bone in root.GetComponentsInChildren<DynamicBone_Ver01>(true))
+                {
+                    if (ContainsSkirtBone(bone.m_Root))
+                        AddTarget(result, DynamicBoneTarget.For(bone, true));
+                }
+
+                foreach (var bone in root.GetComponentsInChildren<DynamicBone_Ver02>(true))
+                {
+                    if (bone.Bones != null && bone.Bones.Any(item => item != null && SkirtTargetClassifier.IsSkirtBoneName(item.name)))
+                        AddTarget(result, DynamicBoneTarget.For(bone, true));
+                }
+            }
+
+            return result;
+        }
+
+        private static bool ContainsSkirtBone(Transform root)
+        {
+            if (root == null)
+                return false;
+            if (SkirtTargetClassifier.IsSkirtBoneName(root.name))
+                return true;
+
+            for (var index = 0; index < root.childCount; index++)
+            {
+                if (ContainsSkirtBone(root.GetChild(index)))
+                    return true;
+            }
+
+            return false;
+        }
+
         private static void AddTargets(IEnumerable<GameObject> roots, IDictionary<string, DynamicBoneTarget> result)
         {
             if (roots == null)
@@ -479,6 +851,8 @@ namespace KKVRHandHairCollider
 
         private static string ColliderId(DynamicBoneCollider collider) => collider.GetInstanceID().ToString();
 
+        private static bool IsFinite(float value) => !float.IsNaN(value) && !float.IsInfinity(value);
+
         private static Transform FindTransform(Transform root, string name)
         {
             if (root.name == name)
@@ -494,27 +868,53 @@ namespace KKVRHandHairCollider
             return null;
         }
 
-        private static Transform FindDeepestTransform(Transform root)
+        private static Transform[] GetContactSamples(Transform root)
         {
             if (root == null)
-                return null;
+                return new Transform[0];
 
-            var deepest = root;
-            var deepestDepth = 0;
-            FindDeepestTransform(root, 0, ref deepest, ref deepestDepth);
-            return deepest;
+            var transforms = new List<Transform>();
+            AddContactSamples(root, transforms);
+            return LimitContactSamples(transforms);
         }
 
-        private static void FindDeepestTransform(Transform current, int depth, ref Transform deepest, ref int deepestDepth)
+        private static void AddContactSamples(Transform current, ICollection<Transform> samples)
         {
-            if (depth > deepestDepth)
+            samples.Add(current);
+            for (var index = 0; index < current.childCount; index++)
+                AddContactSamples(current.GetChild(index), samples);
+        }
+
+        private static Transform[] LimitContactSamples(IList<Transform> samples)
+        {
+            var result = new List<Transform>(MaximumContactSamplesPerTarget);
+            var uniqueSamples = samples.Where(item => item != null).Distinct().ToList();
+            foreach (var sourceIndex in ContactSamplePlanner.PlanIndices(
+                         uniqueSamples.Count,
+                         MaximumContactSamplesPerTarget))
             {
-                deepest = current;
-                deepestDepth = depth;
+                result.Add(uniqueSamples[sourceIndex]);
             }
 
-            for (var index = 0; index < current.childCount; index++)
-                FindDeepestTransform(current.GetChild(index), depth + 1, ref deepest, ref deepestDepth);
+            return result.ToArray();
+        }
+
+        private sealed class SkirtColliderSpec
+        {
+            public SkirtColliderSpec(string boneName, string nameSuffix, float radius, float height, Vector3 center)
+            {
+                BoneName = boneName;
+                NameSuffix = nameSuffix;
+                Radius = radius;
+                Height = height;
+                Center = center;
+            }
+
+            public string BoneName { get; }
+            public string NameSuffix { get; }
+            public float Radius { get; }
+            public float Height { get; }
+            public Vector3 Center { get; }
         }
 
         private sealed class DynamicBoneTarget
@@ -522,7 +922,7 @@ namespace KKVRHandHairCollider
             private readonly MonoBehaviour _bone;
             private readonly Func<DynamicBoneCollider, bool> _contains;
             private readonly Action<DynamicBoneCollider> _add;
-            private readonly Func<Transform> _getTip;
+            private readonly Transform[] _contactSamples;
             private readonly Func<Vector3> _getForce;
             private readonly Action<Vector3> _setForce;
             private readonly Action _resetParticles;
@@ -534,37 +934,57 @@ namespace KKVRHandHairCollider
                 MonoBehaviour bone,
                 Func<DynamicBoneCollider, bool> contains,
                 Action<DynamicBoneCollider> add,
-                Func<Transform> getTip,
+                Transform[] contactSamples,
                 Func<Vector3> getForce,
                 Action<Vector3> setForce,
-                Action resetParticles)
+                Action resetParticles,
+                bool isClothing)
             {
                 Id = id;
                 _bone = bone;
                 _contains = contains;
                 _add = add;
-                _getTip = getTip;
+                _contactSamples = contactSamples;
                 _getForce = getForce;
                 _setForce = setForce;
                 _resetParticles = resetParticles;
+                IsClothing = isClothing;
             }
 
             public string Id { get; }
             public bool IsAlive => _bone != null;
+            public bool IsClothing { get; }
             public bool Contains(DynamicBoneCollider collider) => _contains(collider);
             public void Add(DynamicBoneCollider collider) => _add(collider);
 
-            public bool TryGetPosition(out Vector3 position)
+            public bool TryGetMinimumDistance(Vector3 point, out float distance)
             {
-                var tip = IsAlive ? _getTip() : null;
-                if (tip == null)
+                Transform sample;
+                return TryGetClosestSample(point, out sample, out distance);
+            }
+
+            public bool TryGetClosestSample(Vector3 point, out Transform closestSample, out float distance)
+            {
+                var minimumSquaredDistance = float.MaxValue;
+                closestSample = null;
+                foreach (var sample in _contactSamples)
                 {
-                    position = Vector3.zero;
-                    return false;
+                    if (sample == null)
+                        continue;
+
+                    var squaredDistance = (sample.position - point).sqrMagnitude;
+                    if (!IsFinite(squaredDistance))
+                        continue;
+
+                    if (squaredDistance < minimumSquaredDistance)
+                    {
+                        minimumSquaredDistance = squaredDistance;
+                        closestSample = sample;
+                    }
                 }
 
-                position = tip.position;
-                return true;
+                distance = closestSample == null ? 0f : (float)Math.Sqrt(minimumSquaredDistance);
+                return closestSample != null;
             }
 
             public void ApplyForce(Vector3 force)
@@ -602,77 +1022,133 @@ namespace KKVRHandHairCollider
                 _quietTime = 0f;
             }
 
-            public static DynamicBoneTarget For(DynamicBone bone)
+            public static DynamicBoneTarget For(DynamicBone bone, bool isClothing = false)
             {
                 if (bone.m_Colliders == null)
                     bone.m_Colliders = new List<DynamicBoneCollider>();
                 return Create(
                     bone,
                     bone.m_Colliders,
-                    () => FindDeepestTransform(bone.m_Root),
+                    GetContactSamples(bone.m_Root),
                     () => bone.m_Force,
                     force => bone.m_Force = force,
-                    bone.ResetParticlesPosition);
+                    bone.ResetParticlesPosition,
+                    isClothing);
             }
 
-            public static DynamicBoneTarget For(DynamicBone_Ver01 bone)
+            public static DynamicBoneTarget For(DynamicBone_Ver01 bone, bool isClothing = false)
             {
                 if (bone.m_Colliders == null)
                     bone.m_Colliders = new List<DynamicBoneCollider>();
                 return Create(
                     bone,
                     bone.m_Colliders,
-                    () => FindDeepestTransform(bone.m_Root),
+                    GetContactSamples(bone.m_Root),
                     () => bone.m_Force,
                     force => bone.m_Force = force,
-                    bone.ResetParticlesPosition);
+                    bone.ResetParticlesPosition,
+                    isClothing);
             }
 
-            public static DynamicBoneTarget For(DynamicBone_Ver02 bone)
+            public static DynamicBoneTarget For(DynamicBone_Ver02 bone, bool isClothing = false)
             {
                 if (bone.Colliders == null)
                     bone.Colliders = new List<DynamicBoneCollider>();
                 return Create(
                     bone,
                     bone.Colliders,
-                    () => bone.Bones == null ? null : bone.Bones.LastOrDefault(item => item != null),
+                    LimitContactSamples(bone.Bones == null
+                        ? new List<Transform>()
+                        : bone.Bones.Where(item => item != null).Distinct().ToList()),
                     () => bone.Force,
                     force => bone.Force = force,
-                    bone.ResetParticlesPosition);
+                    bone.ResetParticlesPosition,
+                    isClothing);
             }
 
             private static DynamicBoneTarget Create(
                 MonoBehaviour bone,
                 IList<DynamicBoneCollider> colliders,
-                Func<Transform> getTip,
+                Transform[] contactSamples,
                 Func<Vector3> getForce,
                 Action<Vector3> setForce,
-                Action resetParticles)
+                Action resetParticles,
+                bool isClothing)
             {
                 var id = $"{bone.GetType().Name}:{bone.GetInstanceID()}";
-                return new DynamicBoneTarget(id, bone, colliders.Contains, colliders.Add, getTip, getForce, setForce, resetParticles);
+                return new DynamicBoneTarget(
+                    id,
+                    bone,
+                    colliders.Contains,
+                    colliders.Add,
+                    contactSamples,
+                    getForce,
+                    setForce,
+                    resetParticles,
+                    isClothing);
+            }
+        }
+
+        private sealed class GrabState
+        {
+            public bool IsActive => Target != null;
+            public DynamicBoneTarget Target { get; private set; }
+            public Transform Sample { get; private set; }
+            public Vector3 ControllerToSampleOffset { get; private set; }
+
+            public void Latch(DynamicBoneTarget target, Transform sample, Vector3 controllerPosition)
+            {
+                if (target == null) throw new ArgumentNullException(nameof(target));
+                if (sample == null) throw new ArgumentNullException(nameof(sample));
+
+                Target = target;
+                Sample = sample;
+                ControllerToSampleOffset = sample.position - controllerPosition;
+            }
+
+            public void Release()
+            {
+                Target = null;
+                Sample = null;
+                ControllerToSampleOffset = Vector3.zero;
             }
         }
 
         private sealed class ControllerMotionState
         {
             private Transform _transform;
+            private VRTK_ControllerEvents _controllerEvents;
             private Vector3 _previousPosition;
             private bool _hasPreviousPosition;
 
             public bool IsAvailable { get; private set; }
+            public bool HasGripInput => _controllerEvents != null;
+            public bool GripPressed => IsAvailable && _controllerEvents != null && _controllerEvents.gripPressed;
             public Vector3 Position { get; private set; }
             public Vector3 Velocity { get; private set; }
 
-            public void SetTransform(Transform controllerTransform)
+            public void SetController(GameObject controller)
             {
+                var controllerTransform = controller == null ? null : controller.transform;
                 if (_transform == controllerTransform)
+                {
+                    if (_controllerEvents == null && controller != null)
+                        _controllerEvents = FindControllerEvents(controller);
                     return;
+                }
 
                 _transform = controllerTransform;
+                _controllerEvents = controller == null ? null : FindControllerEvents(controller);
                 _hasPreviousPosition = false;
                 IsAvailable = false;
                 Velocity = Vector3.zero;
+            }
+
+            private static VRTK_ControllerEvents FindControllerEvents(GameObject controller)
+            {
+                return controller.GetComponent<VRTK_ControllerEvents>() ??
+                       controller.GetComponentInChildren<VRTK_ControllerEvents>(true) ??
+                       controller.GetComponentInParent<VRTK_ControllerEvents>();
             }
 
             public void Sample(float deltaTime, float smoothing)
@@ -696,7 +1172,9 @@ namespace KKVRHandHairCollider
                 }
 
                 var rawVelocity = (Position - _previousPosition) / deltaTime;
-                Velocity = Vector3.Lerp(rawVelocity, Velocity, smoothing);
+                Velocity = IsFinite(rawVelocity.sqrMagnitude)
+                    ? Vector3.Lerp(rawVelocity, Velocity, smoothing)
+                    : Vector3.zero;
                 _previousPosition = Position;
             }
         }
