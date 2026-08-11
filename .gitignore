@@ -1,0 +1,24 @@
+# Build output
+bin/
+obj/
+**/bin/
+**/obj/
+
+# IDE and user settings
+.vs/
+.vscode/
+*.user
+*.suo
+
+# Local game files and logs
+*.log
+*.cfg
+
+# Release artifacts
+*.dll
+*.pdb
+*.zip
+
+# OS files
+Thumbs.db
+.DS_Store
