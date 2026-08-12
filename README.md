@@ -5,7 +5,7 @@ It makes tracked Quest/SteamVR controllers interact with hair, accessory, and
 skirt DynamicBone chains, plus clothing that already uses Unity Cloth. It does
 not require CharaStudio and does not replace either physics implementation.
 
-The current installed version is **0.6.1**. The project is experimental but
+The current installed version is **0.6.2**. The project is experimental but
 has passed focused automated tests and a runtime smoke test in the local game
 installation.
 
@@ -98,9 +98,18 @@ source and can optionally include existing `KK_Colliders` hand, forearm, and
 upper-arm colliders. Breast, hip, and leg collider names are not accepted by
 that optional arm-collider path.
 
+Version 0.6.2 recognizes the installed plugin's real `KK_Colliders_*` object
+prefix. Character arm colliders are intentionally limited to hair/accessories;
+they are excluded from skirt targets because KK_Colliders owns the opposite
+policy for `ct_clothesBot`. The plugin tracks only bindings it adds and removes
+those bindings when a feature is disabled, an outfit changes, or a scene unloads.
+
 Unity Cloth uses a separate Unity `SphereCollider` on each controller. The
-plugin appends these as `ClothSphereColliderPair` entries without replacing
-the garment's existing sphere or capsule arrays.
+plugin synchronizes these as `ClothSphereColliderPair` entries without replacing
+the garment's external sphere or capsule arrays. Dead pairs and obsolete
+plugin-owned controller spheres are removed, preventing accumulation after rig
+or scene reconstruction. Unity Cloth remains independent from the skirt
+DynamicBone option.
 
 ### Force and recovery
 
@@ -217,7 +226,7 @@ Run from the repository root:
 dotnet run --project '.\tests\KKVRHandHairCollider.Tests.csproj' -p:GameDir='D:\Games\Koikatu'
 ```
 
-The current suite has **22 passing tests** covering:
+The current suite has **29 passing tests** covering:
 
 - both-controller binding cross-product;
 - skipping existing bindings;
@@ -237,6 +246,10 @@ The current suite has **22 passing tests** covering:
 - contact sample endpoint preservation and the 24-point budget;
 - no-snap grab latching, bounded pulling, and maximum-stretch release;
 - exact reuse and exclusion rules for character arm colliders;
+- real `KK_Colliders_*` name recognition and skirt arm-collider exclusion;
+- stale target and plugin-owned binding reconciliation;
+- Unity fake-null fallback and Cloth pair convergence;
+- runtime feature-switch ownership rules;
 - 16 deterministic 90 Hz trajectories totaling 320,000 velocity-force steps,
   plus 100,000 grab-force boundary samples.
 
@@ -249,7 +262,7 @@ claimed.
 dotnet build '.\src\KKVRHandHairCollider.csproj' -c Release -p:GameDir='D:\Games\Koikatu'
 ```
 
-The 0.6.1 release build targeted `net35` and completed with 0 warnings and 0
+The 0.6.2 release build targeted `net35` and completed with 0 warnings and 0
 errors. Assembly inspection confirmed CLR runtime `v2.0.50727` and only the
 expected game, BepInEx, Unity, and framework references.
 
@@ -264,7 +277,17 @@ dotnet build '.\src\KKVRHandHairCollider.csproj' -c Release
 
 ### Runtime smoke test
 
-The unattended 0.6.1 startup smoke tests showed:
+The unattended 0.6.2 startup smoke tests showed:
+
+- the batch/nographics process remained alive for 40 seconds;
+- the normal VR process remained alive for 45 seconds;
+- BepInEx loaded version 0.6.2 once in each run;
+- plugin error, `TypeLoadException`, `MissingMethodException`, and character
+  binding failure counts were zero;
+- the deployed, Release, and repository-root DLL copies matched SHA-256
+  `FF3029BF7E6D8C29D715BDD623D4DBCD989C24A7E699C3383C702BB5E1CDAD33`.
+
+The prior 0.6.1 baseline also showed:
 
 - BepInEx loaded `KKVR Hair and Clothing Interaction 0.6.1` in both a 40-second
   batch/nographics run and a 45-second normal VR run;
@@ -280,7 +303,7 @@ The unattended 0.6.1 startup smoke tests showed:
   `27FDA8FE621F6F16CAB50E36F049D7F9B48E41A843D042CC7FE60D3487A59795`.
 
 Those unattended starts did not enter a character scene or discover
-controllers, so they did not produce 0.6.1 grab or skirt-binding counts. Earlier 0.5
+controllers, so they did not produce grab or skirt-binding counts. Earlier 0.5
 scene evidence showed:
 
 - original-VR left and right controllers discovered;
@@ -337,8 +360,12 @@ Version 0.6 implements both observed paths:
 5. non-destructive controller sphere appends for existing Unity Cloth.
 
 Automated behavior and startup compatibility are verified. Outfit-by-outfit
-runtime binding counts and headset visuals remain unobserved for 0.6.1 and must
+runtime binding counts and headset visuals remain unobserved for 0.6.2 and must
 not be reported as verified.
+
+The repository-root `KKVRHandHairCollider.dll` is an ignored convenience copy.
+Release preparation refreshes it from the same verified build as the deployed
+plugin; its hash must match `src/bin/Release/net35/KKVRHandHairCollider.dll`.
 
 ## Safe Handoff Procedure For A Later AI
 

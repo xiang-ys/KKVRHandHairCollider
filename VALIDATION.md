@@ -1,4 +1,4 @@
-# KKVR Hair and Clothing Interaction 0.6.1 validation
+# KKVR Hair and Clothing Interaction 0.6.2 validation
 
 ## Goal
 
@@ -57,9 +57,26 @@ cleanly after contact. Breast and hip physics remain native and out of scope.
 
 ## Automated evidence
 
+### 0.6.2 lifecycle regression cycle
+
+- RED checkpoint `77583cf`: new tests failed at compile time because real
+  KK_Colliders naming, skirt-source isolation, target reconciliation, Unity
+  fake-null fallback, Cloth synchronization, and owned-collider switching did
+  not exist.
+- GREEN checkpoint `3eb85be`: the same suite passed after runtime ownership and
+  reconciliation were implemented.
+- Refactor checkpoint `7a4afcc`: review-added lazy fallback, stricter dead Cloth
+  pair removal, immediate config rescan, and fallback-hand ownership remained
+  green.
+- Current result: 29 of 29 focused tests pass.
+- There is no configured coverage collector for this net35 executable harness,
+  so no percentage is claimed.
+
+### Prior 0.6.1 feature evidence
+
 - RED: the 0.6.1 suite initially failed because grab math and reusable-arm
   collider classification did not exist.
-- GREEN: 22 of 22 focused tests pass.
+- GREEN: the prior 22 of 22 focused tests remain part of the 29-test suite.
 - The suite covers binding/source deduplication, slow-drift rejection, force
   falloff and caps, skirt classification, invalid numeric input, nearest chain
   samples, and contact-sample budgeting.
@@ -69,12 +86,13 @@ cleanly after contact. Breast and hip physics remain native and out of scope.
 - A further 100,000-point grab sweep verified zero force inside the dead zone,
   monotonic pull outside it, the `0.04` cap, and maximum-stretch release.
 - Release build: `net35`, 0 warnings, 0 errors.
-- Assembly inspection: CLR `v2.0.50727`, plugin version `0.6.1`, and only
+- Assembly inspection after deployment must show CLR `v2.0.50727`, plugin
+  version `0.6.2`, and only
   expected `mscorlib`, BepInEx, Assembly-CSharp, UnityEngine, and System.Core
   references.
 - Diff check passed. The repository scan found no credential-like values.
 
-## Runtime smoke evidence
+## Prior 0.6.1 runtime smoke evidence
 
 - The release DLL was deployed while `KoikatuVR.exe` was not running.
 - Batch/nographics startup stayed alive for 40 seconds; normal VR startup stayed
@@ -97,6 +115,28 @@ The unattended 0.6.1 starts did not enter a character scene and did not discover
 the controllers before the observation windows ended. Therefore skirt target
 counts, Unity Cloth binding counts, grip latching, and headset visuals are not
 claimed as runtime-verified.
+
+## 0.6.2 runtime smoke evidence
+
+- The 0.6.1 installed DLL was backed up before deployment with SHA-256
+  `FE5F6790B37150D01D21201E7928B048BBE1D250CA54DB9C40A4804D6D18914B`.
+- The 0.6.2 Release build, installed DLL, and repository-root convenience copy
+  all match SHA-256
+  `FF3029BF7E6D8C29D715BDD623D4DBCD989C24A7E699C3383C702BB5E1CDAD33`.
+- Assembly inspection reports plugin version `0.6.2`, CLR `v2.0.50727`, and the
+  expected `mscorlib`, BepInEx, Assembly-CSharp, UnityEngine, and System.Core
+  references only.
+- Batch/nographics startup remained alive for 40 seconds. Normal VR startup
+  remained alive for 45 seconds. Each exact test PID was stopped afterward.
+- Each run loaded `KKVR Hair and Clothing Interaction 0.6.2` exactly once.
+- Plugin error lines: 0. No plugin `TypeLoadException`, `MissingMethodException`,
+  or character-binding failure was logged.
+- The live configuration remains at tuning version 4; 0.6.2 changes lifecycle
+  behavior and does not overwrite user physics tuning.
+
+The unattended runs did not enter a character scene, so live config-toggle
+reconciliation, outfit-change counts, controller grip behavior, and headset
+visuals remain unobserved. These are not claimed as runtime-verified.
 
 ## Prior 0.5 scene baseline
 
