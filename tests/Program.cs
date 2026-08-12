@@ -31,6 +31,12 @@ internal static class Program
         Run("grab pull is bounded and releases past maximum stretch", GrabPullIsBoundedAndReleasesPastMaximumStretch);
         Run("grab physics rejects invalid inputs", GrabPhysicsRejectsInvalidInputs);
         Run("recognizes reusable character arm colliders only", RecognizesReusableCharacterArmCollidersOnly);
+        Run("recognizes real KK_Colliders names", RecognizesRealKkColliderNames);
+        Run("skirt sources exclude character arm colliders", SkirtSourcesExcludeCharacterArmColliders);
+        Run("target registry removes disabled and missing targets", TargetRegistryRemovesDisabledAndMissingTargets);
+        Run("Unity reference fallback treats destroyed objects as missing", UnityReferenceFallbackTreatsDestroyedObjectsAsMissing);
+        Run("cloth binding sync removes stale managed pairs", ClothBindingSyncRemovesStaleManagedPairs);
+        Run("owned collider enablement follows both switches", OwnedColliderEnablementFollowsBothSwitches);
 
         Console.WriteLine(_failed == 0 ? "ALL TESTS PASSED" : $"{_failed} TEST(S) FAILED");
         return _failed == 0 ? 0 : 1;
@@ -286,6 +292,103 @@ internal static class Program
         AssertFalse(CharacterColliderClassifier.IsReusableArmColliderName("Colliders_cf_j_bust01_L"));
         AssertFalse(CharacterColliderClassifier.IsReusableArmColliderName("Colliders_cf_s_thigh01_L"));
         AssertFalse(CharacterColliderClassifier.IsReusableArmColliderName(null));
+    }
+
+    private static void RecognizesRealKkColliderNames()
+    {
+        AssertTrue(CharacterColliderClassifier.IsReusableArmColliderName("KK_Colliders_cf_s_hand_L"));
+        AssertTrue(CharacterColliderClassifier.IsReusableArmColliderName("KK_Colliders_cf_s_forearm02_R"));
+        AssertTrue(CharacterColliderClassifier.IsReusableArmColliderName("KK_Colliders_cf_s_arm02_L"));
+        AssertFalse(CharacterColliderClassifier.IsReusableArmColliderName("KK_Colliders_cf_s_thigh01_L"));
+    }
+
+    private static void SkirtSourcesExcludeCharacterArmColliders()
+    {
+        var result = ColliderSourceSelector.SelectForSkirt(
+            new[] { "left-controller", "right-controller" },
+            new[] { "left-thigh", "right-thigh" });
+
+        AssertValues(result, "left-controller", "right-controller", "left-thigh", "right-thigh");
+    }
+
+    private static void TargetRegistryRemovesDisabledAndMissingTargets()
+    {
+        AssertValues(
+            TargetRegistryPlanner.PlanRemovals(
+                new[] { "hair", "accessory", "skirt", "destroyed" },
+                new[] { "hair" }),
+            "accessory",
+            "destroyed",
+            "skirt");
+        AssertValues(TargetRegistryPlanner.PlanRemovals(Array.Empty<string>(), new[] { "hair" }));
+    }
+
+    private static void UnityReferenceFallbackTreatsDestroyedObjectsAsMissing()
+    {
+        var primary = new FakeUnityReference("destroyed", false);
+        var fallback = new FakeUnityReference("live", true);
+        var selected = UnityReferenceSelector.FirstAvailable(primary, fallback, item => item == null || !item.IsAlive);
+
+        AssertTrue(ReferenceEquals(fallback, selected));
+        AssertTrue(UnityReferenceSelector.FirstAvailable(fallback, primary, item => item == null || !item.IsAlive) == fallback);
+        AssertTrue(UnityReferenceSelector.FirstAvailable(primary, null, item => item == null || !item.IsAlive) == null);
+    }
+
+    private static void ClothBindingSyncRemovesStaleManagedPairs()
+    {
+        var oldManaged = new FakeUnityReference("KKVRHandHairCollider_UnityCloth_L", false);
+        var liveManaged = new FakeUnityReference("KKVRHandHairCollider_UnityCloth_R", true);
+        var liveForeign = new FakeUnityReference("GarmentCollider", true);
+        var newManaged = new FakeUnityReference("KKVRHandHairCollider_UnityCloth_L", true);
+        var existing = new[]
+        {
+            new FakeClothPair(oldManaged),
+            new FakeClothPair(liveManaged),
+            new FakeClothPair(liveForeign),
+            new FakeClothPair(null)
+        };
+
+        var plan = ClothBindingPlanner.Plan(
+            existing,
+            new[] { newManaged, liveManaged },
+            pair => pair.First,
+            pair => pair.Second,
+            item => item != null && item.IsAlive,
+            item => item != null && item.Name.StartsWith("KKVRHandHairCollider_UnityCloth_", StringComparison.Ordinal));
+
+        AssertValues(plan.RetainedPairs.Select(pair => pair.First.Name), "GarmentCollider", "KKVRHandHairCollider_UnityCloth_R");
+        AssertValues(plan.CollidersToAdd.Select(item => item.Name), "KKVRHandHairCollider_UnityCloth_L");
+    }
+
+    private static void OwnedColliderEnablementFollowsBothSwitches()
+    {
+        AssertTrue(OwnedColliderState.ShouldEnable(true, true));
+        AssertFalse(OwnedColliderState.ShouldEnable(false, true));
+        AssertFalse(OwnedColliderState.ShouldEnable(true, false));
+    }
+
+    private sealed class FakeUnityReference
+    {
+        public FakeUnityReference(string name, bool isAlive)
+        {
+            Name = name;
+            IsAlive = isAlive;
+        }
+
+        public string Name { get; }
+        public bool IsAlive { get; }
+    }
+
+    private sealed class FakeClothPair
+    {
+        public FakeClothPair(FakeUnityReference first, FakeUnityReference second = null)
+        {
+            First = first;
+            Second = second;
+        }
+
+        public FakeUnityReference First { get; }
+        public FakeUnityReference Second { get; }
     }
 
     private static void Run(string name, Action test)
