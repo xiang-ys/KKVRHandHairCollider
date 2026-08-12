@@ -122,13 +122,15 @@ claimed as runtime-verified.
   `FE5F6790B37150D01D21201E7928B048BBE1D250CA54DB9C40A4804D6D18914B`.
 - The 0.6.2 Release build, installed DLL, and repository-root convenience copy
   all match SHA-256
-  `FF3029BF7E6D8C29D715BDD623D4DBCD989C24A7E699C3383C702BB5E1CDAD33`.
+  `24A4F7366C1F42543765D2C1E8EC9B494AA9767C14665D63573659CC4513EB32`.
 - Assembly inspection reports plugin version `0.6.2`, CLR `v2.0.50727`, and the
   expected `mscorlib`, BepInEx, Assembly-CSharp, UnityEngine, and System.Core
   references only.
 - Batch/nographics startup remained alive for 40 seconds. Normal VR startup
   remained alive for 45 seconds. Each exact test PID was stopped afterward.
 - Each run loaded `KKVR Hair and Clothing Interaction 0.6.2` exactly once.
+- The exact final-hash binary also passed a separate 30-second normal VR start,
+  loaded once, and produced zero plugin errors.
 - Plugin error lines: 0. No plugin `TypeLoadException`, `MissingMethodException`,
   or character-binding failure was logged.
 - The live configuration remains at tuning version 4; 0.6.2 changes lifecycle

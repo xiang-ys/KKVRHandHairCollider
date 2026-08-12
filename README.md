@@ -285,7 +285,8 @@ The unattended 0.6.2 startup smoke tests showed:
 - plugin error, `TypeLoadException`, `MissingMethodException`, and character
   binding failure counts were zero;
 - the deployed, Release, and repository-root DLL copies matched SHA-256
-  `FF3029BF7E6D8C29D715BDD623D4DBCD989C24A7E699C3383C702BB5E1CDAD33`.
+  `24A4F7366C1F42543765D2C1E8EC9B494AA9767C14665D63573659CC4513EB32`.
+- that exact final binary passed an additional 30-second normal VR startup.
 
 The prior 0.6.1 baseline also showed:
 
