@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Linq;
 
 namespace KKVRHandHairCollider.Core
 {
@@ -78,6 +79,20 @@ namespace KKVRHandHairCollider.Core
             AddUnique(controllerColliders, known, result);
             if (includeCharacterHands)
                 AddUnique(characterHandColliders, known, result);
+            return result;
+        }
+
+        public static IList<T> SelectForSkirt<T>(
+            IEnumerable<T> controllerColliders,
+            IEnumerable<T> bodyColliders)
+        {
+            if (controllerColliders == null) throw new ArgumentNullException(nameof(controllerColliders));
+            if (bodyColliders == null) throw new ArgumentNullException(nameof(bodyColliders));
+
+            var result = new List<T>();
+            var known = new HashSet<T>();
+            AddUnique(controllerColliders, known, result);
+            AddUnique(bodyColliders, known, result);
             return result;
         }
 
@@ -263,6 +278,12 @@ namespace KKVRHandHairCollider.Core
             "Colliders_cf_s_forearm02_R",
             "Colliders_cf_s_arm02_L",
             "Colliders_cf_s_arm02_R",
+            "KK_Colliders_cf_s_hand_L",
+            "KK_Colliders_cf_s_hand_R",
+            "KK_Colliders_cf_s_forearm02_L",
+            "KK_Colliders_cf_s_forearm02_R",
+            "KK_Colliders_cf_s_arm02_L",
+            "KK_Colliders_cf_s_arm02_R",
             "KKVRHandHairCollider_cf_s_hand_L",
             "KKVRHandHairCollider_cf_s_hand_R"
         };
@@ -270,6 +291,102 @@ namespace KKVRHandHairCollider.Core
         public static bool IsReusableArmColliderName(string colliderName)
         {
             return colliderName != null && ReusableArmColliderNames.Contains(colliderName);
+        }
+    }
+
+    public static class TargetRegistryPlanner
+    {
+        public static IList<string> PlanRemovals(
+            IEnumerable<string> registeredTargetIds,
+            IEnumerable<string> desiredTargetIds)
+        {
+            if (registeredTargetIds == null) throw new ArgumentNullException(nameof(registeredTargetIds));
+            if (desiredTargetIds == null) throw new ArgumentNullException(nameof(desiredTargetIds));
+
+            var desired = new HashSet<string>(desiredTargetIds, StringComparer.Ordinal);
+            return registeredTargetIds
+                .Where(targetId => !desired.Contains(targetId))
+                .Distinct(StringComparer.Ordinal)
+                .ToList();
+        }
+    }
+
+    public static class UnityReferenceSelector
+    {
+        public static T FirstAvailable<T>(T primary, T fallback, Func<T, bool> isMissing) where T : class
+        {
+            if (isMissing == null) throw new ArgumentNullException(nameof(isMissing));
+            return isMissing(primary) ? (isMissing(fallback) ? null : fallback) : primary;
+        }
+    }
+
+    public sealed class ClothBindingPlan<TPair, TCollider>
+    {
+        public ClothBindingPlan(IList<TPair> retainedPairs, IList<TCollider> collidersToAdd)
+        {
+            RetainedPairs = retainedPairs ?? throw new ArgumentNullException(nameof(retainedPairs));
+            CollidersToAdd = collidersToAdd ?? throw new ArgumentNullException(nameof(collidersToAdd));
+        }
+
+        public IList<TPair> RetainedPairs { get; }
+        public IList<TCollider> CollidersToAdd { get; }
+    }
+
+    public static class ClothBindingPlanner
+    {
+        public static ClothBindingPlan<TPair, TCollider> Plan<TPair, TCollider>(
+            IEnumerable<TPair> existingPairs,
+            IEnumerable<TCollider> desiredManagedColliders,
+            Func<TPair, TCollider> getFirst,
+            Func<TPair, TCollider> getSecond,
+            Func<TCollider, bool> isAlive,
+            Func<TCollider, bool> isManaged)
+            where TCollider : class
+        {
+            if (existingPairs == null) throw new ArgumentNullException(nameof(existingPairs));
+            if (desiredManagedColliders == null) throw new ArgumentNullException(nameof(desiredManagedColliders));
+            if (getFirst == null) throw new ArgumentNullException(nameof(getFirst));
+            if (getSecond == null) throw new ArgumentNullException(nameof(getSecond));
+            if (isAlive == null) throw new ArgumentNullException(nameof(isAlive));
+            if (isManaged == null) throw new ArgumentNullException(nameof(isManaged));
+
+            var desired = new HashSet<TCollider>(desiredManagedColliders.Where(isAlive));
+            var present = new HashSet<TCollider>();
+            var retained = new List<TPair>();
+
+            foreach (var pair in existingPairs)
+            {
+                var first = getFirst(pair);
+                var second = getSecond(pair);
+                var firstAlive = isAlive(first);
+                var secondAlive = isAlive(second);
+                if (!firstAlive && !secondAlive)
+                    continue;
+
+                var firstManaged = firstAlive && isManaged(first);
+                var secondManaged = secondAlive && isManaged(second);
+                if ((firstManaged && !desired.Contains(first)) ||
+                    (secondManaged && !desired.Contains(second)))
+                    continue;
+
+                retained.Add(pair);
+                if (firstManaged)
+                    present.Add(first);
+                if (secondManaged)
+                    present.Add(second);
+            }
+
+            return new ClothBindingPlan<TPair, TCollider>(
+                retained,
+                desired.Where(collider => !present.Contains(collider)).ToList());
+        }
+    }
+
+    public static class OwnedColliderState
+    {
+        public static bool ShouldEnable(bool pluginEnabled, bool featureEnabled)
+        {
+            return pluginEnabled && featureEnabled;
         }
     }
 }

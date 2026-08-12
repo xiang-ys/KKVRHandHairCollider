@@ -15,7 +15,7 @@ namespace KKVRHandHairCollider
     {
         public const string Guid = "local.kkvr.handhaircollider";
         public const string Name = "KKVR Hair and Clothing Interaction";
-        public const string Version = "0.6.1";
+        public const string Version = "0.6.2";
 
         private const int MaximumContactSamplesPerTarget = 24;
 
@@ -69,6 +69,13 @@ namespace KKVRHandHairCollider
         private readonly GrabState _leftGrab = new GrabState();
         private readonly GrabState _rightGrab = new GrabState();
         private readonly Dictionary<string, DynamicBoneTarget> _forceTargets = new Dictionary<string, DynamicBoneTarget>(StringComparer.Ordinal);
+        private readonly HashSet<string> _desiredForceTargetIds = new HashSet<string>(StringComparer.Ordinal);
+        private readonly Dictionary<string, OwnedDynamicBoneBinding> _ownedBindings = new Dictionary<string, OwnedDynamicBoneBinding>(StringComparer.Ordinal);
+        private readonly HashSet<string> _desiredBindingIds = new HashSet<string>(StringComparer.Ordinal);
+        private readonly HashSet<Cloth> _managedCloths = new HashSet<Cloth>();
+        private readonly HashSet<Cloth> _desiredManagedCloths = new HashSet<Cloth>();
+        private readonly HashSet<DynamicBoneCollider> _ownedHeadColliders = new HashSet<DynamicBoneCollider>();
+        private readonly HashSet<DynamicBoneCollider> _ownedSkirtBodyColliders = new HashSet<DynamicBoneCollider>();
         private bool _controllerLookupWarningLogged;
         private bool _grabInputWarningLogged;
 
@@ -130,6 +137,7 @@ namespace KKVRHandHairCollider
                 _headColliderRadius.Value = 0.075f;
                 _headColliderHeight.Value = 0.10f;
                 _headColliderCenterY.Value = 0.015f;
+                _tuningVersion.Value = 2;
                 Logger.LogMessage("Applied conservative contact tuning: smaller controller sphere, shorter force shell, and smaller head capsule.");
             }
 
@@ -158,11 +166,15 @@ namespace KKVRHandHairCollider
             if (!_enabled.Value)
             {
                 SetControllerColliderState(false, false);
-                ResetAllForces();
+                DisableOwnedCharacterColliders();
+                ClearOwnedBindings();
+                ClearForceTargets();
+                ClearManagedClothBindings();
                 return;
             }
 
             SetControllerColliderState(_controllerCollidersEnabled.Value, _unityClothEnabled.Value);
+            SetOwnedCharacterColliderState();
             if (Time.unscaledTime < _nextScan)
             {
                 ApplyControllerForces();
@@ -170,6 +182,9 @@ namespace KKVRHandHairCollider
             }
 
             _nextScan = Time.unscaledTime + _scanInterval.Value;
+            _desiredBindingIds.Clear();
+            _desiredForceTargetIds.Clear();
+            _desiredManagedCloths.Clear();
             var controllerColliders = _controllerCollidersEnabled.Value || _controllerForceEnabled.Value || _grabEnabled.Value || _unityClothEnabled.Value
                 ? EnsureControllerColliders(_controllerCollidersEnabled.Value)
                 : new List<DynamicBoneCollider>();
@@ -188,6 +203,11 @@ namespace KKVRHandHairCollider
                     Logger.LogError($"Failed to bind character {character.chaID}: {exception}");
                 }
             }
+
+            ReconcileOwnedBindings();
+            ReconcileForceTargets();
+            ReconcileManagedCloths();
+            SetOwnedCharacterColliderState();
 
             ApplyControllerForces();
         }
@@ -213,8 +233,9 @@ namespace KKVRHandHairCollider
             RegisterForceTargets(hairTargets.Values, "hair/accessory");
             BindTargets(character, hairTargets, hairColliders, "controller/head/hand-to-hair");
 
-            if (_includeClothing.Value && _unityClothEnabled.Value)
-                BindUnityCloth(character);
+            SyncUnityCloth(character, _unityClothEnabled.Value
+                ? AvailableControllerClothColliders()
+                : new SphereCollider[0]);
 
             if (!_includeClothing.Value)
                 return;
@@ -226,15 +247,14 @@ namespace KKVRHandHairCollider
             var skirtBodyColliders = _skirtBodyCollidersEnabled.Value
                 ? EnsureSkirtBodyColliders(character)
                 : new List<DynamicBoneCollider>();
-            var skirtColliders = ColliderSourceSelector.Select(
-                    controllerColliders.Concat(skirtBodyColliders),
-                    characterHandColliders,
-                    _includeCharacterHandColliders.Value)
+            var skirtColliders = ColliderSourceSelector.SelectForSkirt(
+                    controllerColliders,
+                    skirtBodyColliders)
                 .Where(collider => collider != null)
                 .ToList();
 
             RegisterForceTargets(skirtTargets.Values, "skirt");
-            BindTargets(character, skirtTargets, skirtColliders, "controller/body/hand-to-skirt");
+            BindTargets(character, skirtTargets, skirtColliders, "controller/body-to-skirt");
         }
 
         private void BindTargets(
@@ -259,13 +279,28 @@ namespace KKVRHandHairCollider
             var colliderById = colliders.ToDictionary(ColliderId, collider => collider);
             var planned = BindingPlanner.Plan(targets.Keys, colliderById.Keys, existing);
             foreach (var pair in planned)
-                targets[pair.DynamicBoneId].Add(colliderById[pair.ColliderId]);
+            {
+                var target = targets[pair.DynamicBoneId];
+                var collider = colliderById[pair.ColliderId];
+                target.Add(collider);
+                var bindingId = BindingId(target.Id, collider);
+                _ownedBindings[bindingId] = new OwnedDynamicBoneBinding(target, collider);
+            }
+
+            foreach (var target in targets.Values)
+            {
+                foreach (var collider in colliders)
+                {
+                    if (target.Contains(collider))
+                        _desiredBindingIds.Add(BindingId(target.Id, collider));
+                }
+            }
 
             if (planned.Count > 0)
                 Logger.LogInfo($"Character {character.chaID}: added {planned.Count} {bindingLabel} bindings across {targets.Count} Dynamic Bones.");
         }
 
-        private void BindUnityCloth(ChaControl character)
+        private void SyncUnityCloth(ChaControl character, IList<SphereCollider> desiredColliders)
         {
             var clothes = character.objClothes;
             if (clothes == null)
@@ -284,8 +319,9 @@ namespace KKVRHandHairCollider
                         continue;
 
                     clothCount++;
-                    added += AddClothSphere(cloth, _leftControllerClothCollider);
-                    added += AddClothSphere(cloth, _rightControllerClothCollider);
+                    _managedCloths.Add(cloth);
+                    _desiredManagedCloths.Add(cloth);
+                    added += SyncClothSpheres(cloth, desiredColliders);
                 }
             }
 
@@ -293,20 +329,40 @@ namespace KKVRHandHairCollider
                 Logger.LogInfo($"Character {character.chaID}: added {added} controller sphere bindings across {clothCount} Unity Cloth components.");
         }
 
-        private static int AddClothSphere(Cloth cloth, SphereCollider collider)
+        private static int SyncClothSpheres(Cloth cloth, IList<SphereCollider> desiredColliders)
         {
-            if (collider == null)
+            if (cloth == null)
                 return 0;
 
             var existing = cloth.sphereColliders ?? new ClothSphereColliderPair[0];
-            if (existing.Any(pair => pair.first == collider || pair.second == collider))
-                return 0;
+            var plan = ClothBindingPlanner.Plan(
+                existing,
+                desiredColliders,
+                pair => pair.first,
+                pair => pair.second,
+                collider => collider != null,
+                IsManagedClothCollider);
+            var updated = new List<ClothSphereColliderPair>(plan.RetainedPairs);
+            updated.AddRange(plan.CollidersToAdd.Select(collider => new ClothSphereColliderPair(collider)));
+            if (!existing.SequenceEqual(updated))
+                cloth.sphereColliders = updated.ToArray();
+            return plan.CollidersToAdd.Count;
+        }
 
-            var updated = new ClothSphereColliderPair[existing.Length + 1];
-            Array.Copy(existing, updated, existing.Length);
-            updated[existing.Length] = new ClothSphereColliderPair(collider);
-            cloth.sphereColliders = updated;
-            return 1;
+        private IList<SphereCollider> AvailableControllerClothColliders()
+        {
+            var result = new List<SphereCollider>(2);
+            if (_leftControllerClothCollider != null)
+                result.Add(_leftControllerClothCollider);
+            if (_rightControllerClothCollider != null)
+                result.Add(_rightControllerClothCollider);
+            return result;
+        }
+
+        private static bool IsManagedClothCollider(SphereCollider collider)
+        {
+            return collider != null &&
+                   collider.gameObject.name.StartsWith("KKVRHandHairCollider_UnityCloth_", StringComparison.Ordinal);
         }
 
         private static IList<DynamicBoneCollider> AddHeadCollider(IList<DynamicBoneCollider> controllerColliders, DynamicBoneCollider headCollider)
@@ -327,8 +383,12 @@ namespace KKVRHandHairCollider
 
             try
             {
-                leftController = VRTK_DeviceFinder.GetControllerLeftHand(false) ?? VRTK_DeviceFinder.GetControllerLeftHand(true);
-                rightController = VRTK_DeviceFinder.GetControllerRightHand(false) ?? VRTK_DeviceFinder.GetControllerRightHand(true);
+                leftController = VRTK_DeviceFinder.GetControllerLeftHand(false);
+                if (leftController == null)
+                    leftController = VRTK_DeviceFinder.GetControllerLeftHand(true);
+                rightController = VRTK_DeviceFinder.GetControllerRightHand(false);
+                if (rightController == null)
+                    rightController = VRTK_DeviceFinder.GetControllerRightHand(true);
 
                 if (leftController == null || rightController == null)
                 {
@@ -486,6 +546,8 @@ namespace KKVRHandHairCollider
                 Logger.LogMessage($"Created head Dynamic Bone collider for character {character.chaID}.");
             }
 
+            _ownedHeadColliders.Add(collider);
+
             collider.m_Center = new Vector3(0f, _headColliderCenterY.Value, 0f);
             collider.m_Radius = _headColliderRadius.Value;
             collider.m_Height = _headColliderHeight.Value;
@@ -523,6 +585,7 @@ namespace KKVRHandHairCollider
                     collider.m_Direction = DynamicBoneCollider.Direction.Y;
                     collider.m_Bound = DynamicBoneCollider.Bound.Outside;
                     result.Add(collider);
+                    _ownedSkirtBodyColliders.Add(collider);
                 }
 
                 Logger.LogMessage($"Created {group.Count()} fallback skirt body colliders on {group.Key} for character {character.chaID}.");
@@ -548,6 +611,7 @@ namespace KKVRHandHairCollider
             var added = 0;
             foreach (var target in targets)
             {
+                _desiredForceTargetIds.Add(target.Id);
                 if (!_forceTargets.ContainsKey(target.Id))
                 {
                     _forceTargets.Add(target.Id, target);
@@ -573,13 +637,15 @@ namespace KKVRHandHairCollider
             UpdateGrab(_leftControllerMotion, _leftGrab);
             UpdateGrab(_rightControllerMotion, _rightGrab);
 
-            var staleTargetIds = new List<string>();
+            List<string> staleTargetIds = null;
             foreach (var entry in _forceTargets)
             {
                 var target = entry.Value;
                 if (!target.IsAlive)
                 {
                     target.ResetForce();
+                    if (staleTargetIds == null)
+                        staleTargetIds = new List<string>();
                     staleTargetIds.Add(entry.Key);
                     continue;
                 }
@@ -604,8 +670,11 @@ namespace KKVRHandHairCollider
                     target.ReleaseForce(deltaTime);
             }
 
-            foreach (var targetId in staleTargetIds)
-                _forceTargets.Remove(targetId);
+            if (staleTargetIds != null)
+            {
+                foreach (var targetId in staleTargetIds)
+                    _forceTargets.Remove(targetId);
+            }
         }
 
         private void UpdateGrab(ControllerMotionState controller, GrabState grab)
@@ -717,19 +786,123 @@ namespace KKVRHandHairCollider
                 target.ResetForce();
         }
 
+        private void ReconcileForceTargets()
+        {
+            foreach (var targetId in TargetRegistryPlanner.PlanRemovals(
+                         _forceTargets.Keys,
+                         _desiredForceTargetIds))
+            {
+                _forceTargets[targetId].ResetForce();
+                _forceTargets.Remove(targetId);
+            }
+        }
+
+        private void ClearForceTargets()
+        {
+            ResetAllForces();
+            _forceTargets.Clear();
+            _desiredForceTargetIds.Clear();
+        }
+
+        private void ReconcileOwnedBindings()
+        {
+            var removalIds = _ownedBindings.Keys
+                .Where(bindingId => !_desiredBindingIds.Contains(bindingId))
+                .ToList();
+            foreach (var bindingId in removalIds)
+            {
+                _ownedBindings[bindingId].Remove();
+                _ownedBindings.Remove(bindingId);
+            }
+        }
+
+        private void ClearOwnedBindings()
+        {
+            foreach (var binding in _ownedBindings.Values)
+                binding.Remove();
+            _ownedBindings.Clear();
+            _desiredBindingIds.Clear();
+        }
+
+        private void ReconcileManagedCloths()
+        {
+            var stale = _managedCloths
+                .Where(cloth => cloth == null || !_desiredManagedCloths.Contains(cloth))
+                .ToList();
+            foreach (var cloth in stale)
+            {
+                if (cloth != null)
+                    SyncClothSpheres(cloth, new SphereCollider[0]);
+                _managedCloths.Remove(cloth);
+            }
+        }
+
+        private void ClearManagedClothBindings()
+        {
+            foreach (var cloth in _managedCloths.ToList())
+            {
+                if (cloth != null)
+                    SyncClothSpheres(cloth, new SphereCollider[0]);
+            }
+            _managedCloths.Clear();
+            _desiredManagedCloths.Clear();
+        }
+
+        private void SetOwnedCharacterColliderState()
+        {
+            SetColliderCollectionState(
+                _ownedHeadColliders,
+                OwnedColliderState.ShouldEnable(_enabled.Value, _headColliderEnabled.Value));
+            SetColliderCollectionState(
+                _ownedSkirtBodyColliders,
+                OwnedColliderState.ShouldEnable(
+                    _enabled.Value,
+                    _includeClothing.Value && _skirtBodyCollidersEnabled.Value));
+        }
+
+        private void DisableOwnedCharacterColliders()
+        {
+            SetColliderCollectionState(_ownedHeadColliders, false);
+            SetColliderCollectionState(_ownedSkirtBodyColliders, false);
+        }
+
+        private static void SetColliderCollectionState(
+            ICollection<DynamicBoneCollider> colliders,
+            bool enabled)
+        {
+            var destroyed = colliders.Where(collider => collider == null).ToList();
+            foreach (var collider in destroyed)
+                colliders.Remove(collider);
+            foreach (var collider in colliders)
+                collider.enabled = enabled;
+        }
+
         private void OnDisable()
         {
             SetControllerColliderState(false, false);
-            ResetAllForces();
+            DisableOwnedCharacterColliders();
+            ClearOwnedBindings();
+            ClearForceTargets();
+            ClearManagedClothBindings();
         }
 
         private void OnDestroy()
         {
             SetControllerColliderState(false, false);
-            ResetAllForces();
+            DisableOwnedCharacterColliders();
+            ClearOwnedBindings();
+            ClearForceTargets();
+            ClearManagedClothBindings();
         }
 
-        private void OnLevelWasLoaded(int level) => ResetAllForces();
+        private void OnLevelWasLoaded(int level)
+        {
+            ClearOwnedBindings();
+            ClearForceTargets();
+            ClearManagedClothBindings();
+            _ownedHeadColliders.Clear();
+            _ownedSkirtBodyColliders.Clear();
+        }
 
         private List<DynamicBoneCollider> FindHandColliders(ChaControl character)
         {
@@ -851,6 +1024,11 @@ namespace KKVRHandHairCollider
 
         private static string ColliderId(DynamicBoneCollider collider) => collider.GetInstanceID().ToString();
 
+        private static string BindingId(string targetId, DynamicBoneCollider collider)
+        {
+            return targetId + ":" + ColliderId(collider);
+        }
+
         private static bool IsFinite(float value) => !float.IsNaN(value) && !float.IsInfinity(value);
 
         private static Transform FindTransform(Transform root, string name)
@@ -917,11 +1095,30 @@ namespace KKVRHandHairCollider
             public Vector3 Center { get; }
         }
 
+        private sealed class OwnedDynamicBoneBinding
+        {
+            private readonly DynamicBoneTarget _target;
+            private readonly DynamicBoneCollider _collider;
+
+            public OwnedDynamicBoneBinding(DynamicBoneTarget target, DynamicBoneCollider collider)
+            {
+                _target = target ?? throw new ArgumentNullException(nameof(target));
+                _collider = collider ?? throw new ArgumentNullException(nameof(collider));
+            }
+
+            public void Remove()
+            {
+                if (_target.IsAlive)
+                    _target.Remove(_collider);
+            }
+        }
+
         private sealed class DynamicBoneTarget
         {
             private readonly MonoBehaviour _bone;
             private readonly Func<DynamicBoneCollider, bool> _contains;
             private readonly Action<DynamicBoneCollider> _add;
+            private readonly Action<DynamicBoneCollider> _remove;
             private readonly Transform[] _contactSamples;
             private readonly Func<Vector3> _getForce;
             private readonly Action<Vector3> _setForce;
@@ -934,6 +1131,7 @@ namespace KKVRHandHairCollider
                 MonoBehaviour bone,
                 Func<DynamicBoneCollider, bool> contains,
                 Action<DynamicBoneCollider> add,
+                Action<DynamicBoneCollider> remove,
                 Transform[] contactSamples,
                 Func<Vector3> getForce,
                 Action<Vector3> setForce,
@@ -944,6 +1142,7 @@ namespace KKVRHandHairCollider
                 _bone = bone;
                 _contains = contains;
                 _add = add;
+                _remove = remove;
                 _contactSamples = contactSamples;
                 _getForce = getForce;
                 _setForce = setForce;
@@ -956,6 +1155,7 @@ namespace KKVRHandHairCollider
             public bool IsClothing { get; }
             public bool Contains(DynamicBoneCollider collider) => _contains(collider);
             public void Add(DynamicBoneCollider collider) => _add(collider);
+            public void Remove(DynamicBoneCollider collider) => _remove(collider);
 
             public bool TryGetMinimumDistance(Vector3 point, out float distance)
             {
@@ -1081,6 +1281,7 @@ namespace KKVRHandHairCollider
                     bone,
                     colliders.Contains,
                     colliders.Add,
+                    collider => colliders.Remove(collider),
                     contactSamples,
                     getForce,
                     setForce,
@@ -1146,9 +1347,12 @@ namespace KKVRHandHairCollider
 
             private static VRTK_ControllerEvents FindControllerEvents(GameObject controller)
             {
-                return controller.GetComponent<VRTK_ControllerEvents>() ??
-                       controller.GetComponentInChildren<VRTK_ControllerEvents>(true) ??
-                       controller.GetComponentInParent<VRTK_ControllerEvents>();
+                var events = controller.GetComponent<VRTK_ControllerEvents>();
+                if (events == null)
+                    events = controller.GetComponentInChildren<VRTK_ControllerEvents>(true);
+                if (events == null)
+                    events = controller.GetComponentInParent<VRTK_ControllerEvents>();
+                return events;
             }
 
             public void Sample(float deltaTime, float smoothing)
