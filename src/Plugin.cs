@@ -76,6 +76,7 @@ namespace KKVRHandHairCollider
         private readonly HashSet<Cloth> _desiredManagedCloths = new HashSet<Cloth>();
         private readonly HashSet<DynamicBoneCollider> _ownedHeadColliders = new HashSet<DynamicBoneCollider>();
         private readonly HashSet<DynamicBoneCollider> _ownedSkirtBodyColliders = new HashSet<DynamicBoneCollider>();
+        private readonly HashSet<DynamicBoneCollider> _ownedFallbackHandColliders = new HashSet<DynamicBoneCollider>();
         private bool _controllerLookupWarningLogged;
         private bool _grabInputWarningLogged;
 
@@ -119,10 +120,23 @@ namespace KKVRHandHairCollider
             _unityClothEnabled = Config.Bind("Unity Cloth", "Enabled", true, "Append controller spheres to clothing that uses Unity Cloth instead of Dynamic Bones.");
             _scanInterval = Config.Bind("General", "Scan interval seconds", 1.0f, new ConfigDescription("How often loaded characters are checked.", new AcceptableValueRange<float>(0.25f, 10f)));
             _tuningVersion = Config.Bind("General", "Tuning version", 0, "Internal parameter migration version.");
+            WatchForRescan(_includeAccessories);
+            WatchForRescan(_includeClothing);
+            WatchForRescan(_controllerCollidersEnabled);
+            WatchForRescan(_includeCharacterHandColliders);
+            WatchForRescan(_createFallbackColliders);
+            WatchForRescan(_headColliderEnabled);
+            WatchForRescan(_skirtBodyCollidersEnabled);
+            WatchForRescan(_unityClothEnabled);
             MigrateTuning();
             Config.Save();
             _initialized = true;
             Logger.LogMessage("Controller hair/clothing collision, force, and grip interaction loaded; waiting for VR controllers and characters.");
+        }
+
+        private void WatchForRescan<T>(ConfigEntry<T> entry)
+        {
+            entry.SettingChanged += (sender, args) => _nextScan = 0f;
         }
 
         private void MigrateTuning()
@@ -341,6 +355,7 @@ namespace KKVRHandHairCollider
                 pair => pair.first,
                 pair => pair.second,
                 collider => collider != null,
+                collider => ReferenceEquals(collider, null),
                 IsManagedClothCollider);
             var updated = new List<ClothSphereColliderPair>(plan.RetainedPairs);
             updated.AddRange(plan.CollidersToAdd.Select(collider => new ClothSphereColliderPair(collider)));
@@ -383,12 +398,14 @@ namespace KKVRHandHairCollider
 
             try
             {
-                leftController = VRTK_DeviceFinder.GetControllerLeftHand(false);
-                if (leftController == null)
-                    leftController = VRTK_DeviceFinder.GetControllerLeftHand(true);
-                rightController = VRTK_DeviceFinder.GetControllerRightHand(false);
-                if (rightController == null)
-                    rightController = VRTK_DeviceFinder.GetControllerRightHand(true);
+                leftController = UnityReferenceSelector.FirstAvailable(
+                    VRTK_DeviceFinder.GetControllerLeftHand(false),
+                    () => VRTK_DeviceFinder.GetControllerLeftHand(true),
+                    controller => controller == null);
+                rightController = UnityReferenceSelector.FirstAvailable(
+                    VRTK_DeviceFinder.GetControllerRightHand(false),
+                    () => VRTK_DeviceFinder.GetControllerRightHand(true),
+                    controller => controller == null);
 
                 if (leftController == null || rightController == null)
                 {
@@ -858,12 +875,18 @@ namespace KKVRHandHairCollider
                 OwnedColliderState.ShouldEnable(
                     _enabled.Value,
                     _includeClothing.Value && _skirtBodyCollidersEnabled.Value));
+            SetColliderCollectionState(
+                _ownedFallbackHandColliders,
+                OwnedColliderState.ShouldEnable(
+                    _enabled.Value,
+                    _includeCharacterHandColliders.Value && _createFallbackColliders.Value));
         }
 
         private void DisableOwnedCharacterColliders()
         {
             SetColliderCollectionState(_ownedHeadColliders, false);
             SetColliderCollectionState(_ownedSkirtBodyColliders, false);
+            SetColliderCollectionState(_ownedFallbackHandColliders, false);
         }
 
         private static void SetColliderCollectionState(
@@ -902,12 +925,16 @@ namespace KKVRHandHairCollider
             ClearManagedClothBindings();
             _ownedHeadColliders.Clear();
             _ownedSkirtBodyColliders.Clear();
+            _ownedFallbackHandColliders.Clear();
         }
 
         private List<DynamicBoneCollider> FindHandColliders(ChaControl character)
         {
             return character.GetComponentsInChildren<DynamicBoneCollider>(true)
-                .Where(collider => CharacterColliderClassifier.IsReusableArmColliderName(collider.gameObject.name))
+                .Where(collider =>
+                    CharacterColliderClassifier.IsReusableArmColliderName(collider.gameObject.name) &&
+                    (_createFallbackColliders.Value ||
+                     !CharacterColliderClassifier.IsPluginFallbackHandColliderName(collider.gameObject.name)))
                 .GroupBy(ColliderId)
                 .Select(group => group.First())
                 .ToList();
@@ -920,20 +947,28 @@ namespace KKVRHandHairCollider
             var right = FindTransform(character.transform, "cf_s_hand_R");
 
             if (left != null)
-                result.Add(CreateCollider(left, "L", new Vector3(-0.03f, -0.005f, 0f)));
+                result.Add(EnsureFallbackHandCollider(left, "L", new Vector3(-0.03f, -0.005f, 0f)));
             if (right != null)
-                result.Add(CreateCollider(right, "R", new Vector3(0.03f, -0.005f, 0f)));
+                result.Add(EnsureFallbackHandCollider(right, "R", new Vector3(0.03f, -0.005f, 0f)));
             return result;
         }
 
-        private static DynamicBoneCollider CreateCollider(Transform parent, string side, Vector3 center)
+        private DynamicBoneCollider EnsureFallbackHandCollider(Transform parent, string side, Vector3 center)
         {
-            var colliderObject = new GameObject($"KKVRHandHairCollider_cf_s_hand_{side}");
-            colliderObject.transform.SetParent(parent, false);
-            var collider = colliderObject.AddComponent<DynamicBoneCollider>();
+            var colliderName = $"KKVRHandHairCollider_cf_s_hand_{side}";
+            var collider = parent.GetComponentsInChildren<DynamicBoneCollider>(true)
+                .FirstOrDefault(item => item.transform.parent == parent && item.gameObject.name == colliderName);
+            if (collider == null)
+            {
+                var colliderObject = new GameObject(colliderName);
+                colliderObject.transform.SetParent(parent, false);
+                collider = colliderObject.AddComponent<DynamicBoneCollider>();
+            }
             collider.m_Radius = 0.020f;
             collider.m_Height = 0.075f;
             collider.m_Center = center;
+            collider.enabled = true;
+            _ownedFallbackHandColliders.Add(collider);
             return collider;
         }
 

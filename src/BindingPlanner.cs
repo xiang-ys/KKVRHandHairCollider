@@ -292,6 +292,12 @@ namespace KKVRHandHairCollider.Core
         {
             return colliderName != null && ReusableArmColliderNames.Contains(colliderName);
         }
+
+        public static bool IsPluginFallbackHandColliderName(string colliderName)
+        {
+            return StringComparer.Ordinal.Equals(colliderName, "KKVRHandHairCollider_cf_s_hand_L") ||
+                   StringComparer.Ordinal.Equals(colliderName, "KKVRHandHairCollider_cf_s_hand_R");
+        }
     }
 
     public static class TargetRegistryPlanner
@@ -313,10 +319,15 @@ namespace KKVRHandHairCollider.Core
 
     public static class UnityReferenceSelector
     {
-        public static T FirstAvailable<T>(T primary, T fallback, Func<T, bool> isMissing) where T : class
+        public static T FirstAvailable<T>(T primary, Func<T> getFallback, Func<T, bool> isMissing) where T : class
         {
+            if (getFallback == null) throw new ArgumentNullException(nameof(getFallback));
             if (isMissing == null) throw new ArgumentNullException(nameof(isMissing));
-            return isMissing(primary) ? (isMissing(fallback) ? null : fallback) : primary;
+            if (!isMissing(primary))
+                return primary;
+
+            var fallback = getFallback();
+            return isMissing(fallback) ? null : fallback;
         }
     }
 
@@ -340,6 +351,7 @@ namespace KKVRHandHairCollider.Core
             Func<TPair, TCollider> getFirst,
             Func<TPair, TCollider> getSecond,
             Func<TCollider, bool> isAlive,
+            Func<TCollider, bool> isEmpty,
             Func<TCollider, bool> isManaged)
             where TCollider : class
         {
@@ -348,6 +360,7 @@ namespace KKVRHandHairCollider.Core
             if (getFirst == null) throw new ArgumentNullException(nameof(getFirst));
             if (getSecond == null) throw new ArgumentNullException(nameof(getSecond));
             if (isAlive == null) throw new ArgumentNullException(nameof(isAlive));
+            if (isEmpty == null) throw new ArgumentNullException(nameof(isEmpty));
             if (isManaged == null) throw new ArgumentNullException(nameof(isManaged));
 
             var desired = new HashSet<TCollider>(desiredManagedColliders.Where(isAlive));
@@ -360,7 +373,7 @@ namespace KKVRHandHairCollider.Core
                 var second = getSecond(pair);
                 var firstAlive = isAlive(first);
                 var secondAlive = isAlive(second);
-                if (!firstAlive && !secondAlive)
+                if (!firstAlive || (!isEmpty(second) && !secondAlive))
                     continue;
 
                 var firstManaged = firstAlive && isManaged(first);

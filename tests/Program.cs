@@ -37,6 +37,7 @@ internal static class Program
         Run("Unity reference fallback treats destroyed objects as missing", UnityReferenceFallbackTreatsDestroyedObjectsAsMissing);
         Run("cloth binding sync removes stale managed pairs", ClothBindingSyncRemovesStaleManagedPairs);
         Run("owned collider enablement follows both switches", OwnedColliderEnablementFollowsBothSwitches);
+        Run("identifies plugin fallback hand colliders", IdentifiesPluginFallbackHandColliders);
 
         Console.WriteLine(_failed == 0 ? "ALL TESTS PASSED" : $"{_failed} TEST(S) FAILED");
         return _failed == 0 ? 0 : 1;
@@ -327,11 +328,19 @@ internal static class Program
     {
         var primary = new FakeUnityReference("destroyed", false);
         var fallback = new FakeUnityReference("live", true);
-        var selected = UnityReferenceSelector.FirstAvailable(primary, fallback, item => item == null || !item.IsAlive);
+        var fallbackCalls = 0;
+        Func<FakeUnityReference> getFallback = () =>
+        {
+            fallbackCalls++;
+            return fallback;
+        };
+        var selected = UnityReferenceSelector.FirstAvailable(primary, getFallback, item => item == null || !item.IsAlive);
 
         AssertTrue(ReferenceEquals(fallback, selected));
-        AssertTrue(UnityReferenceSelector.FirstAvailable(fallback, primary, item => item == null || !item.IsAlive) == fallback);
-        AssertTrue(UnityReferenceSelector.FirstAvailable(primary, null, item => item == null || !item.IsAlive) == null);
+        AssertTrue(fallbackCalls == 1);
+        AssertTrue(UnityReferenceSelector.FirstAvailable(fallback, getFallback, item => item == null || !item.IsAlive) == fallback);
+        AssertTrue(fallbackCalls == 1);
+        AssertTrue(UnityReferenceSelector.FirstAvailable(primary, () => null, item => item == null || !item.IsAlive) == null);
     }
 
     private static void ClothBindingSyncRemovesStaleManagedPairs()
@@ -339,12 +348,14 @@ internal static class Program
         var oldManaged = new FakeUnityReference("KKVRHandHairCollider_UnityCloth_L", false);
         var liveManaged = new FakeUnityReference("KKVRHandHairCollider_UnityCloth_R", true);
         var liveForeign = new FakeUnityReference("GarmentCollider", true);
+        var destroyedForeign = new FakeUnityReference("OldGarmentCollider", false);
         var newManaged = new FakeUnityReference("KKVRHandHairCollider_UnityCloth_L", true);
         var existing = new[]
         {
             new FakeClothPair(oldManaged),
             new FakeClothPair(liveManaged),
             new FakeClothPair(liveForeign),
+            new FakeClothPair(liveForeign, destroyedForeign),
             new FakeClothPair(null)
         };
 
@@ -354,6 +365,7 @@ internal static class Program
             pair => pair.First,
             pair => pair.Second,
             item => item != null && item.IsAlive,
+            item => item == null,
             item => item != null && item.Name.StartsWith("KKVRHandHairCollider_UnityCloth_", StringComparison.Ordinal));
 
         AssertValues(plan.RetainedPairs.Select(pair => pair.First.Name), "GarmentCollider", "KKVRHandHairCollider_UnityCloth_R");
@@ -365,6 +377,14 @@ internal static class Program
         AssertTrue(OwnedColliderState.ShouldEnable(true, true));
         AssertFalse(OwnedColliderState.ShouldEnable(false, true));
         AssertFalse(OwnedColliderState.ShouldEnable(true, false));
+    }
+
+    private static void IdentifiesPluginFallbackHandColliders()
+    {
+        AssertTrue(CharacterColliderClassifier.IsPluginFallbackHandColliderName("KKVRHandHairCollider_cf_s_hand_L"));
+        AssertTrue(CharacterColliderClassifier.IsPluginFallbackHandColliderName("KKVRHandHairCollider_cf_s_hand_R"));
+        AssertFalse(CharacterColliderClassifier.IsPluginFallbackHandColliderName("KK_Colliders_cf_s_hand_L"));
+        AssertFalse(CharacterColliderClassifier.IsPluginFallbackHandColliderName(null));
     }
 
     private sealed class FakeUnityReference
