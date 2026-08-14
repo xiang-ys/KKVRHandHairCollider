@@ -1600,17 +1600,14 @@ namespace KKVRHandHairCollider
 
             public bool TryGetClosestContact(Vector3 point, out Vector3 closestPosition, out float distance)
             {
+                Transform sample;
+                var found = TryGetClosestSample(point, out sample, out distance);
+                var minimumSquaredDistance = found ? distance * distance : float.MaxValue;
+                closestPosition = found ? sample.position : Vector3.zero;
                 if (Kind == InteractionTargetKind.Hair || _contactSegments.Length == 0)
-                {
-                    Transform sample;
-                    var foundSample = TryGetClosestSample(point, out sample, out distance);
-                    closestPosition = foundSample ? sample.position : Vector3.zero;
-                    return foundSample;
-                }
+                    return found;
 
-                var minimumSquaredDistance = float.MaxValue;
-                closestPosition = Vector3.zero;
-                var found = false;
+                var contactPoint = ToContactVector(point);
                 foreach (var segment in _contactSegments)
                 {
                     if (segment.Start == null || segment.End == null)
@@ -1618,7 +1615,7 @@ namespace KKVRHandHairCollider
 
                     SegmentProjection projection;
                     if (!ContactSegmentMath.TryProject(
-                            ToContactVector(point),
+                            contactPoint,
                             ToContactVector(segment.Start.position),
                             ToContactVector(segment.End.position),
                             out projection) ||
