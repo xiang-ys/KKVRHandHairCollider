@@ -22,7 +22,9 @@ internal static class Program
         Run("force is capped for fast swings", ForceIsCappedForFastSwings);
         Run("force stops outside interaction radius", ForceStopsOutsideRadius);
         Run("recognizes standard and modded skirt bone names", RecognizesSkirtBoneNames);
+        Run("recognizes the game's bottom-clothing skirt component", RecognizesBottomClothingSkirtComponent);
         Run("rejects non-skirt clothing bones", RejectsNonSkirtBoneNames);
+        Run("stationary skirt contact produces a bounded push", StationarySkirtContactProducesBoundedPush);
         Run("force uses the nearest sampled chain point", ForceUsesNearestChainPoint);
         Run("force rejects invalid physics inputs", ForceRejectsInvalidInputs);
         Run("trajectory simulation stays bounded and local", TrajectorySimulationStaysBoundedAndLocal);
@@ -158,6 +160,14 @@ internal static class Program
         AssertTrue(SkirtTargetClassifier.IsSkirtBoneName("cf_j_spinesk_03"));
     }
 
+    private static void RecognizesBottomClothingSkirtComponent()
+    {
+        AssertTrue(SkirtTargetClassifier.IsSkirtComponentName("ct_clothesBot"));
+        AssertTrue(SkirtTargetClassifier.IsSkirtComponentName("CT_CLOTHESBOT"));
+        AssertFalse(SkirtTargetClassifier.IsSkirtComponentName("ct_clothesTop"));
+        AssertFalse(SkirtTargetClassifier.IsSkirtComponentName("cf_j_bust01_L"));
+    }
+
     private static void RejectsNonSkirtBoneNames()
     {
         AssertFalse(SkirtTargetClassifier.IsSkirtBoneName(null));
@@ -165,6 +175,14 @@ internal static class Program
         AssertFalse(SkirtTargetClassifier.IsSkirtBoneName("cf_j_bust01_L"));
         AssertFalse(SkirtTargetClassifier.IsSkirtBoneName("cf_s_thigh01_L"));
         AssertFalse(SkirtTargetClassifier.IsSkirtBoneName("acc_sk_ribbon"));
+    }
+
+    private static void StationarySkirtContactProducesBoundedPush()
+    {
+        AssertNear(0.006f, ContactPushMath.ComputeMagnitude(0.020f, 0.035f, 0.008f, 0.006f, 0.025f));
+        AssertNear(0.003f, ContactPushMath.ComputeMagnitude(0.039f, 0.035f, 0.008f, 0.006f, 0.025f));
+        AssertNear(0f, ContactPushMath.ComputeMagnitude(0.043f, 0.035f, 0.008f, 0.006f, 0.025f));
+        AssertNear(0.025f, ContactPushMath.ComputeMagnitude(0.010f, 0.035f, 0.008f, 0.050f, 0.025f));
     }
 
     private static void ForceUsesNearestChainPoint()
