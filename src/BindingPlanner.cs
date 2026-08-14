@@ -176,6 +176,11 @@ namespace KKVRHandHairCollider.Core
 
     public static class SkirtTargetClassifier
     {
+        public static bool IsSkirtComponentName(string componentName)
+        {
+            return string.Equals(componentName, "ct_clothesBot", StringComparison.OrdinalIgnoreCase);
+        }
+
         public static bool IsSkirtBoneName(string boneName)
         {
             if (string.IsNullOrEmpty(boneName))
@@ -185,6 +190,37 @@ namespace KKVRHandHairCollider.Core
                    boneName.StartsWith("cf_d_sk_", StringComparison.OrdinalIgnoreCase) ||
                    boneName.IndexOf("_backsk_", StringComparison.OrdinalIgnoreCase) >= 0 ||
                    boneName.IndexOf("_spinesk_", StringComparison.OrdinalIgnoreCase) >= 0;
+        }
+    }
+
+    public static class ContactPushMath
+    {
+        public static float ComputeMagnitude(
+            float distance,
+            float colliderRadius,
+            float falloffPadding,
+            float strength,
+            float maximumForce)
+        {
+            ValidateNonNegativeFinite(distance, nameof(distance));
+            ValidateNonNegativeFinite(colliderRadius, nameof(colliderRadius));
+            ValidateNonNegativeFinite(strength, nameof(strength));
+            ValidateNonNegativeFinite(maximumForce, nameof(maximumForce));
+            if (float.IsNaN(falloffPadding) || float.IsInfinity(falloffPadding) || falloffPadding <= 0f)
+                throw new ArgumentOutOfRangeException(nameof(falloffPadding));
+
+            if (distance >= colliderRadius + falloffPadding || strength == 0f || maximumForce == 0f)
+                return 0f;
+
+            var outsideCollider = Math.Max(0f, distance - colliderRadius);
+            var influence = 1f - outsideCollider / falloffPadding;
+            return Math.Min(strength * influence, maximumForce);
+        }
+
+        private static void ValidateNonNegativeFinite(float value, string parameterName)
+        {
+            if (float.IsNaN(value) || float.IsInfinity(value) || value < 0f)
+                throw new ArgumentOutOfRangeException(parameterName);
         }
     }
 

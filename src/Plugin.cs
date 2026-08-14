@@ -15,7 +15,7 @@ namespace KKVRHandHairCollider
     {
         public const string Guid = "local.kkvr.handhaircollider";
         public const string Name = "KKVR Hair and Clothing Interaction";
-        public const string Version = "0.6.2";
+        public const string Version = "0.6.3";
 
         private const int MaximumContactSamplesPerTarget = 24;
 
@@ -43,6 +43,7 @@ namespace KKVRHandHairCollider
         private ConfigEntry<bool> _clothingForceEnabled;
         private ConfigEntry<float> _clothingForceStrength;
         private ConfigEntry<float> _clothingMaximumForce;
+        private ConfigEntry<float> _clothingContactPushStrength;
         private ConfigEntry<bool> _grabEnabled;
         private ConfigEntry<float> _grabStrength;
         private ConfigEntry<float> _grabMaximumForce;
@@ -105,6 +106,7 @@ namespace KKVRHandHairCollider
             _clothingForceEnabled = Config.Bind("Clothing force", "Enabled", true, "Apply conservative controller-velocity force to nearby skirt chains.");
             _clothingForceStrength = Config.Bind("Clothing force", "Strength", 0.012f, new ConfigDescription("Force generated per meter/second for skirt chains.", new AcceptableValueRange<float>(0.002f, 0.10f)));
             _clothingMaximumForce = Config.Bind("Clothing force", "Maximum force", 0.025f, new ConfigDescription("Safety cap for force applied to one skirt Dynamic Bone.", new AcceptableValueRange<float>(0.005f, 0.15f)));
+            _clothingContactPushStrength = Config.Bind("Clothing force", "Stationary contact push", 0.006f, new ConfigDescription("Bounded outward push while a controller rests against a skirt chain.", new AcceptableValueRange<float>(0f, 0.05f)));
             _grabEnabled = Config.Bind("Grab interaction", "Enabled", true, "Hold the controller grip near hair, accessories, or skirt chains to pull them without replacing their physics.");
             _grabStrength = Config.Bind("Grab interaction", "Strength", 0.20f, new ConfigDescription("Bounded pull force per meter moved after a chain is grabbed.", new AcceptableValueRange<float>(0.02f, 1.0f)));
             _grabMaximumForce = Config.Bind("Grab interaction", "Maximum force", 0.04f, new ConfigDescription("Safety cap for grab force; skirt chains retain their lower clothing force cap.", new AcceptableValueRange<float>(0.01f, 0.15f)));
@@ -171,6 +173,13 @@ namespace KKVRHandHairCollider
                 _grabMaximumStretch.Value = 0.22f;
                 _tuningVersion.Value = 4;
                 Logger.LogMessage("Applied bounded grip tuning with no-snap anchoring and automatic stretch release.");
+            }
+
+            if (_tuningVersion.Value < 5)
+            {
+                _clothingContactPushStrength.Value = 0.006f;
+                _tuningVersion.Value = 5;
+                Logger.LogMessage("Applied bounded stationary-contact tuning for skirt interaction.");
             }
         }
 
@@ -675,6 +684,11 @@ namespace KKVRHandHairCollider
                     ? CalculateControllerForce(_leftControllerMotion, target, strength, maximumForce) +
                       CalculateControllerForce(_rightControllerMotion, target, strength, maximumForce)
                     : Vector3.zero;
+                if (target.IsClothing && _clothingForceEnabled.Value)
+                {
+                    force += CalculateClothingContactPush(_leftControllerMotion, target, maximumForce);
+                    force += CalculateClothingContactPush(_rightControllerMotion, target, maximumForce);
+                }
                 var grabMaximumForce = Math.Min(maximumForce, _grabMaximumForce.Value);
                 force += CalculateGrabForce(_leftControllerMotion, _leftGrab, target, grabMaximumForce);
                 force += CalculateGrabForce(_rightControllerMotion, _rightGrab, target, grabMaximumForce);
@@ -793,6 +807,31 @@ namespace KKVRHandHairCollider
             return speed <= 0f || magnitude <= 0f
                 ? Vector3.zero
                 : controller.Velocity / speed * magnitude;
+        }
+
+        private Vector3 CalculateClothingContactPush(
+            ControllerMotionState controller,
+            DynamicBoneTarget target,
+            float maximumForce)
+        {
+            if (!controller.IsAvailable)
+                return Vector3.zero;
+
+            Transform closestSample;
+            float distance;
+            if (!target.TryGetClosestSample(controller.Position, out closestSample, out distance))
+                return Vector3.zero;
+
+            var magnitude = ContactPushMath.ComputeMagnitude(
+                distance,
+                _controllerRadius.Value,
+                _forceContactPadding.Value,
+                _clothingContactPushStrength.Value,
+                maximumForce);
+            if (magnitude <= 0f || distance <= 0f)
+                return Vector3.zero;
+
+            return (closestSample.position - controller.Position) / distance * magnitude;
         }
 
         private void ResetAllForces()
@@ -997,19 +1036,20 @@ namespace KKVRHandHairCollider
 
                 foreach (var bone in root.GetComponentsInChildren<DynamicBone>(true))
                 {
-                    if (ContainsSkirtBone(bone.m_Root))
+                    if (SkirtTargetClassifier.IsSkirtComponentName(bone.name) || ContainsSkirtBone(bone.m_Root))
                         AddTarget(result, DynamicBoneTarget.For(bone, true));
                 }
 
                 foreach (var bone in root.GetComponentsInChildren<DynamicBone_Ver01>(true))
                 {
-                    if (ContainsSkirtBone(bone.m_Root))
+                    if (SkirtTargetClassifier.IsSkirtComponentName(bone.name) || ContainsSkirtBone(bone.m_Root))
                         AddTarget(result, DynamicBoneTarget.For(bone, true));
                 }
 
                 foreach (var bone in root.GetComponentsInChildren<DynamicBone_Ver02>(true))
                 {
-                    if (bone.Bones != null && bone.Bones.Any(item => item != null && SkirtTargetClassifier.IsSkirtBoneName(item.name)))
+                    if (SkirtTargetClassifier.IsSkirtComponentName(bone.name) ||
+                        bone.Bones != null && bone.Bones.Any(item => item != null && SkirtTargetClassifier.IsSkirtBoneName(item.name)))
                         AddTarget(result, DynamicBoneTarget.For(bone, true));
                 }
             }
