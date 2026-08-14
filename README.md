@@ -1,5 +1,7 @@
 # KKVR Hair and Clothing Interaction
 
+**English** | [简体中文](README.zh-CN.md) | [日本語](README.ja.md)
+
 This BepInEx plugin connects tracked Quest/SteamVR controllers to the movable
 physics that the game and installed mods already provide: hair, physical
 accessories, skirt and garment DynamicBone chains, and clothing that uses Unity
@@ -9,6 +11,11 @@ interaction without replacing the original physics solvers.
 The current release is **1.0**. It has passed 39 focused automated tests,
 Release compilation, assembly inspection, startup smoke testing, and attended
 in-game testing with original and modded garments.
+
+Download the verified DLL from the [latest GitHub Release](https://github.com/xiang-ys/KKVRHandHairCollider/releases/latest).
+Release history is available in [CHANGELOG.md](CHANGELOG.md), and detailed test
+evidence is recorded in [VALIDATION.md](VALIDATION.md). Published binary hashes
+are listed in [SHA256SUMS.txt](SHA256SUMS.txt).
 
 This is an unofficial community project. It is not affiliated with or
 endorsed by Illusion. The game, BepInEx, VRTK, and DynamicBone are not included.
@@ -456,7 +463,11 @@ plugin; its hash must match `src/bin/Release/net35/KKVRHandHairCollider.dll`.
 
 ```text
 KKVRHandHairCollider/
+  CHANGELOG.md                      Release history
   README.md                         This handoff document
+  README.zh-CN.md                   Simplified Chinese documentation
+  README.ja.md                      Japanese documentation
+  SHA256SUMS.txt                    Current release binary checksum
   VALIDATION.md                     Detailed v0.5 verification history
   src/
     Plugin.cs                       BepInEx runtime integration
