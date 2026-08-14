@@ -31,6 +31,7 @@ internal static class Program
         Run("accessory eligibility respects no-shake and converted clothing roots", AccessoryEligibilityRespectsBoundaries);
         Run("interaction cloth roots include every accessory slot", InteractionClothRootsIncludeAccessories);
         Run("accessory contact simulation stays bounded across chain sizes", AccessoryContactSimulationStaysBounded);
+        Run("segment contact covers gaps between sparse garment bones", SegmentContactCoversSparseBoneGaps);
         Run("force uses the nearest sampled chain point", ForceUsesNearestChainPoint);
         Run("force rejects invalid physics inputs", ForceRejectsInvalidInputs);
         Run("trajectory simulation stays bounded and local", TrajectorySimulationStaysBoundedAndLocal);
@@ -316,6 +317,40 @@ internal static class Program
             if (distance >= 0.035f + profile.ContactPadding)
                 AssertNear(0f, contact);
         }
+    }
+
+    private static void SegmentContactCoversSparseBoneGaps()
+    {
+        SegmentProjection projection;
+        AssertTrue(ContactSegmentMath.TryProject(
+            new ContactVector3(0.02f, 0.50f, 0f),
+            new ContactVector3(0f, 0f, 0f),
+            new ContactVector3(0f, 1f, 0f),
+            out projection));
+        AssertNear(0.50f, projection.Parameter);
+        AssertNear(0.0004f, projection.SquaredDistance);
+        AssertNear(0f, projection.Point.X);
+        AssertNear(0.50f, projection.Point.Y);
+
+        AssertTrue(ContactSegmentMath.TryProject(
+            new ContactVector3(0f, -0.25f, 0f),
+            new ContactVector3(0f, 0f, 0f),
+            new ContactVector3(0f, 1f, 0f),
+            out projection));
+        AssertNear(0f, projection.Parameter);
+
+        AssertTrue(ContactSegmentMath.TryProject(
+            new ContactVector3(2f, 0f, 0f),
+            new ContactVector3(1f, 0f, 0f),
+            new ContactVector3(1f, 0f, 0f),
+            out projection));
+        AssertNear(1f, projection.SquaredDistance);
+
+        AssertFalse(ContactSegmentMath.TryProject(
+            new ContactVector3(float.NaN, 0f, 0f),
+            new ContactVector3(0f, 0f, 0f),
+            new ContactVector3(1f, 0f, 0f),
+            out projection));
     }
 
     private static void ForceUsesNearestChainPoint()
