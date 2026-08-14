@@ -360,6 +360,21 @@ namespace KKVRHandHairCollider.Core
         }
     }
 
+    public static class ClothingTargetClassifier
+    {
+        public static bool ShouldInclude(
+            bool componentEnabled,
+            bool hasPhysicsRoot,
+            string componentName,
+            string comment,
+            IEnumerable<string> boneNames)
+        {
+            return componentEnabled &&
+                   hasPhysicsRoot &&
+                   !AccessoryTargetClassifier.IsNativeBodyPhysics(componentName, comment, boneNames);
+        }
+    }
+
     public static class ContactPushMath
     {
         public static float ComputeMagnitude(

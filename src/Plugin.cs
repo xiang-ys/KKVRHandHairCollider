@@ -18,7 +18,7 @@ namespace KKVRHandHairCollider
     {
         public const string Guid = "local.kkvr.handhaircollider";
         public const string Name = "KKVR Hair and Clothing Interaction";
-        public const string Version = "0.6.4";
+        public const string Version = "0.6.5";
 
         private const int MaximumContactSamplesPerTarget = 24;
 
@@ -104,7 +104,7 @@ namespace KKVRHandHairCollider
 
             _enabled = Config.Bind("General", "Enabled", true, "Enable controller interaction with supported hair, accessories, and clothing.");
             _includeAccessories = Config.Bind("General", "Include accessory Dynamic Bones", true, "Also bind hand colliders to accessory Dynamic Bones.");
-            _includeClothing = Config.Bind("General", "Include skirt Dynamic Bones", true, "Bind controllers to skirt chains found in the top and bottom clothing slots.");
+            _includeClothing = Config.Bind("General", "Include skirt Dynamic Bones", true, "Bind controllers to physical clothing chains found in the top and bottom clothing slots, including mod garments with generic bone names.");
             _controllerCollidersEnabled = Config.Bind("Controller collision", "Enabled", true, "Use the tracked VR controllers as Dynamic Bone colliders.");
             _controllerRadius = Config.Bind("Controller collision", "Radius meters", 0.035f, new ConfigDescription("Radius of each spherical controller collider.", new AcceptableValueRange<float>(0.015f, 0.12f)));
             _controllerForceEnabled = Config.Bind("Controller force", "Enabled", true, "Master switch for controller movement and stationary contact forces on supported Dynamic Bones.");
@@ -118,10 +118,10 @@ namespace KKVRHandHairCollider
             _accessoryMaximumForce = Config.Bind("Accessory force", "Maximum force", 0.030f, new ConfigDescription("Base safety cap for long accessory chains; shorter chains use a lower cap.", new AcceptableValueRange<float>(0.005f, 0.15f)));
             _accessoryContactPushStrength = Config.Bind("Accessory force", "Stationary contact push", 0.006f, new ConfigDescription("Base outward push while a controller rests against a physical accessory.", new AcceptableValueRange<float>(0f, 0.05f)));
             _accessoryContactPadding = Config.Bind("Accessory force", "Contact padding meters", 0.012f, new ConfigDescription("Soft contact shell around the controller for accessory chains.", new AcceptableValueRange<float>(0.001f, 0.05f)));
-            _clothingForceEnabled = Config.Bind("Clothing force", "Enabled", true, "Apply conservative controller-velocity force to nearby skirt chains.");
-            _clothingForceStrength = Config.Bind("Clothing force", "Strength", 0.012f, new ConfigDescription("Force generated per meter/second for skirt chains.", new AcceptableValueRange<float>(0.002f, 0.10f)));
-            _clothingMaximumForce = Config.Bind("Clothing force", "Maximum force", 0.025f, new ConfigDescription("Safety cap for force applied to one skirt Dynamic Bone.", new AcceptableValueRange<float>(0.005f, 0.15f)));
-            _clothingContactPushStrength = Config.Bind("Clothing force", "Stationary contact push", 0.006f, new ConfigDescription("Bounded outward push while a controller rests against a skirt chain.", new AcceptableValueRange<float>(0f, 0.05f)));
+            _clothingForceEnabled = Config.Bind("Clothing force", "Enabled", true, "Apply conservative controller-velocity force to nearby physical clothing chains.");
+            _clothingForceStrength = Config.Bind("Clothing force", "Strength", 0.012f, new ConfigDescription("Force generated per meter/second for physical clothing chains.", new AcceptableValueRange<float>(0.002f, 0.10f)));
+            _clothingMaximumForce = Config.Bind("Clothing force", "Maximum force", 0.025f, new ConfigDescription("Safety cap for force applied to one physical clothing Dynamic Bone.", new AcceptableValueRange<float>(0.005f, 0.15f)));
+            _clothingContactPushStrength = Config.Bind("Clothing force", "Stationary contact push", 0.006f, new ConfigDescription("Bounded outward push while a controller rests against a physical clothing chain.", new AcceptableValueRange<float>(0f, 0.05f)));
             _grabEnabled = Config.Bind("Grab interaction", "Enabled", true, "Hold the controller grip near hair, accessories, or skirt chains to pull them without replacing their physics.");
             _grabStrength = Config.Bind("Grab interaction", "Strength", 0.20f, new ConfigDescription("Bounded pull force per meter moved after a chain is grabbed.", new AcceptableValueRange<float>(0.02f, 1.0f)));
             _grabMaximumForce = Config.Bind("Grab interaction", "Maximum force", 0.04f, new ConfigDescription("Safety cap for grab force; skirt chains retain their lower clothing force cap.", new AcceptableValueRange<float>(0.01f, 0.15f)));
@@ -295,9 +295,9 @@ namespace KKVRHandHairCollider
             if (!_includeClothing.Value)
                 return;
 
-            var skirtTargets = FindSkirtTargets(character);
-            LogClothingScan(character, skirtTargets.Count);
-            if (skirtTargets.Count == 0)
+            var clothingTargets = FindClothingTargets(character);
+            LogClothingScan(character, clothingTargets.Count);
+            if (clothingTargets.Count == 0)
                 return;
 
             var skirtBodyColliders = _skirtBodyCollidersEnabled.Value
@@ -309,8 +309,8 @@ namespace KKVRHandHairCollider
                 .Where(collider => collider != null)
                 .ToList();
 
-            RegisterForceTargets(skirtTargets.Values, "skirt");
-            BindTargets(character, skirtTargets, skirtColliders, "controller/body-to-skirt");
+            RegisterForceTargets(clothingTargets.Values, "physical garment");
+            BindTargets(character, clothingTargets, skirtColliders, "controller/body-to-physical-garment");
         }
 
         private void BindTargets(
@@ -1237,7 +1237,7 @@ namespace KKVRHandHairCollider
             }
         }
 
-        private static Dictionary<string, DynamicBoneTarget> FindSkirtTargets(ChaControl character)
+        private static Dictionary<string, DynamicBoneTarget> FindClothingTargets(ChaControl character)
         {
             var result = new Dictionary<string, DynamicBoneTarget>(StringComparer.Ordinal);
             var clothes = character.objClothes;
@@ -1253,20 +1253,39 @@ namespace KKVRHandHairCollider
 
                 foreach (var bone in root.GetComponentsInChildren<DynamicBone>(true))
                 {
-                    if (SkirtTargetClassifier.IsSkirtComponentName(bone.name) || ContainsSkirtBone(bone.m_Root))
+                    var boneNames = TransformNames(bone.m_Root).ToArray();
+                    if (ClothingTargetClassifier.ShouldInclude(
+                            bone.enabled,
+                            bone.m_Root != null,
+                            bone.name,
+                            null,
+                            boneNames))
                         AddTarget(result, DynamicBoneTarget.For(bone, InteractionTargetKind.Skirt));
                 }
 
                 foreach (var bone in root.GetComponentsInChildren<DynamicBone_Ver01>(true))
                 {
-                    if (SkirtTargetClassifier.IsSkirtComponentName(bone.name) || ContainsSkirtBone(bone.m_Root))
+                    var boneNames = TransformNames(bone.m_Root).ToArray();
+                    if (ClothingTargetClassifier.ShouldInclude(
+                            bone.enabled,
+                            bone.m_Root != null,
+                            bone.name,
+                            bone.comment,
+                            boneNames))
                         AddTarget(result, DynamicBoneTarget.For(bone, InteractionTargetKind.Skirt));
                 }
 
                 foreach (var bone in root.GetComponentsInChildren<DynamicBone_Ver02>(true))
                 {
-                    if (SkirtTargetClassifier.IsSkirtComponentName(bone.name) ||
-                        bone.Bones != null && bone.Bones.Any(item => item != null && SkirtTargetClassifier.IsSkirtBoneName(item.name)))
+                    var boneNames = bone.Bones == null
+                        ? new string[0]
+                        : bone.Bones.Where(item => item != null).Select(item => item.name).ToArray();
+                    if (ClothingTargetClassifier.ShouldInclude(
+                            bone.enabled,
+                            boneNames.Length > 0,
+                            bone.name,
+                            bone.Comment,
+                            boneNames))
                         AddTarget(result, DynamicBoneTarget.For(bone, InteractionTargetKind.Skirt));
                 }
             }
@@ -1324,7 +1343,7 @@ namespace KKVRHandHairCollider
             _clothingScanSignatures[characterId] = signature;
             var examples = sortedDescriptions.Take(12).ToArray();
             var suffix = examples.Length == 0 ? string.Empty : $" Components: {string.Join(", ", examples)}.";
-            Logger.LogInfo($"Character {character.chaID}: clothing scan found {totalCount} Dynamic Bone components in top/bottom slots and recognized {skirtTargetCount} skirt targets.{suffix}");
+            Logger.LogInfo($"Character {character.chaID}: clothing scan found {totalCount} Dynamic Bone components in top/bottom slots and registered {skirtTargetCount} physical garment targets.{suffix}");
         }
 
         private static void AddClothingDescription(HashSet<string> descriptions, int slot, string componentName, string rootName)
@@ -1332,22 +1351,6 @@ namespace KKVRHandHairCollider
             if (descriptions.Count >= 12)
                 return;
             descriptions.Add($"slot{slot} {componentName ?? "<unnamed>"}/{rootName ?? "<no-root>"}");
-        }
-
-        private static bool ContainsSkirtBone(Transform root)
-        {
-            if (root == null)
-                return false;
-            if (SkirtTargetClassifier.IsSkirtBoneName(root.name))
-                return true;
-
-            for (var index = 0; index < root.childCount; index++)
-            {
-                if (ContainsSkirtBone(root.GetChild(index)))
-                    return true;
-            }
-
-            return false;
         }
 
         private static void AddTargets(
