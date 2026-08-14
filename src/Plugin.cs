@@ -148,7 +148,7 @@ namespace KKVRHandHairCollider
             MigrateTuning();
             Config.Save();
             _initialized = true;
-            Logger.LogMessage("Controller hair/clothing collision, force, and grip interaction loaded; waiting for VR controllers and characters.");
+            Logger.LogMessage("Controller hair/accessory/clothing collision, force, and grip interaction loaded; waiting for VR controllers and characters.");
         }
 
         private void WatchForRescan<T>(ConfigEntry<T> entry)
@@ -1116,10 +1116,9 @@ namespace KKVRHandHairCollider
                     var rootNames = TransformNames(bone.m_Root).ToArray();
                     AddAccessoryDescription(descriptions, slot, nameof(DynamicBone), bone.name, rootNames.FirstOrDefault());
                     var bodyPhysics = AccessoryTargetClassifier.IsNativeBodyPhysics(bone.name, null, rootNames);
-                    var ownedRoot = IsTransformWithinRoot(bone.m_Root, root.transform);
-                    if (!AccessoryTargetClassifier.ShouldInclude(bone.enabled, bone.m_Root != null, bodyPhysics, ownedRoot))
+                    if (!AccessoryTargetClassifier.ShouldInclude(bone.enabled, bone.m_Root != null, bodyPhysics))
                     {
-                        if (bodyPhysics || !ownedRoot)
+                        if (bodyPhysics)
                             bodyPhysicsCount++;
                         else
                             inactiveCount++;
@@ -1134,10 +1133,9 @@ namespace KKVRHandHairCollider
                     var rootNames = TransformNames(bone.m_Root).ToArray();
                     AddAccessoryDescription(descriptions, slot, nameof(DynamicBone_Ver01), bone.name, rootNames.FirstOrDefault());
                     var bodyPhysics = AccessoryTargetClassifier.IsNativeBodyPhysics(bone.name, null, rootNames);
-                    var ownedRoot = IsTransformWithinRoot(bone.m_Root, root.transform);
-                    if (!AccessoryTargetClassifier.ShouldInclude(bone.enabled, bone.m_Root != null, bodyPhysics, ownedRoot))
+                    if (!AccessoryTargetClassifier.ShouldInclude(bone.enabled, bone.m_Root != null, bodyPhysics))
                     {
-                        if (bodyPhysics || !ownedRoot)
+                        if (bodyPhysics)
                             bodyPhysicsCount++;
                         else
                             inactiveCount++;
@@ -1154,11 +1152,9 @@ namespace KKVRHandHairCollider
                         : bone.Bones.Where(item => item != null).Select(item => item.name).ToArray();
                     AddAccessoryDescription(descriptions, slot, nameof(DynamicBone_Ver02), bone.name, boneNames.FirstOrDefault());
                     var bodyPhysics = AccessoryTargetClassifier.IsNativeBodyPhysics(bone.name, bone.Comment, boneNames);
-                    var ownedRoot = bone.Bones != null &&
-                                    bone.Bones.Where(item => item != null).All(item => IsTransformWithinRoot(item, root.transform));
-                    if (!AccessoryTargetClassifier.ShouldInclude(bone.enabled, boneNames.Length > 0, bodyPhysics, ownedRoot))
+                    if (!AccessoryTargetClassifier.ShouldInclude(bone.enabled, boneNames.Length > 0, bodyPhysics))
                     {
-                        if (bodyPhysics || !ownedRoot)
+                        if (bodyPhysics)
                             bodyPhysicsCount++;
                         else
                             inactiveCount++;
@@ -1239,19 +1235,6 @@ namespace KKVRHandHairCollider
                 foreach (var childName in TransformNames(root.GetChild(index)))
                     yield return childName;
             }
-        }
-
-        private static bool IsTransformWithinRoot(Transform candidate, Transform root)
-        {
-            if (candidate == null || root == null)
-                return false;
-
-            for (var current = candidate; current != null; current = current.parent)
-            {
-                if (current == root)
-                    return true;
-            }
-            return false;
         }
 
         private static Dictionary<string, DynamicBoneTarget> FindSkirtTargets(ChaControl character)

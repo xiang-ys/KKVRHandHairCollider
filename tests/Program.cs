@@ -27,7 +27,7 @@ internal static class Program
         Run("stationary skirt contact produces a bounded push", StationarySkirtContactProducesBoundedPush);
         Run("accessories receive an independent adaptive interaction profile", AccessoriesReceiveAdaptiveProfile);
         Run("accessory targets exclude native breast and hip physics", AccessoryTargetsExcludeNativeBodyPhysics);
-        Run("accessory eligibility respects no-shake roots and ownership", AccessoryEligibilityRespectsBoundaries);
+        Run("accessory eligibility respects no-shake and converted clothing roots", AccessoryEligibilityRespectsBoundaries);
         Run("interaction cloth roots include every accessory slot", InteractionClothRootsIncludeAccessories);
         Run("accessory contact simulation stays bounded across chain sizes", AccessoryContactSimulationStaysBounded);
         Run("force uses the nearest sampled chain point", ForceUsesNearestChainPoint);
@@ -229,6 +229,10 @@ internal static class Program
             "ct_accessory", null, new[] { "cf_d_siri01_R" }));
         AssertTrue(AccessoryTargetClassifier.IsNativeBodyPhysics(
             "ct_accessory", "右胸", new[] { "custom_root" }));
+        AssertTrue(AccessoryTargetClassifier.IsNativeBodyPhysics(
+            "ct_accessory", null, new[] { "cf_j_kokan" }));
+        AssertTrue(AccessoryTargetClassifier.IsNativeBodyPhysics(
+            "ct_accessory", null, new[] { "cf_d_ana" }));
         AssertFalse(AccessoryTargetClassifier.IsNativeBodyPhysics(
             "ct_accessory", null, new[] { "earring_root", "earring_tip" }));
         AssertFalse(AccessoryTargetClassifier.IsNativeBodyPhysics(
@@ -237,11 +241,10 @@ internal static class Program
 
     private static void AccessoryEligibilityRespectsBoundaries()
     {
-        AssertTrue(AccessoryTargetClassifier.ShouldInclude(true, true, false, true));
-        AssertFalse(AccessoryTargetClassifier.ShouldInclude(false, true, false, true));
-        AssertFalse(AccessoryTargetClassifier.ShouldInclude(true, false, false, true));
-        AssertFalse(AccessoryTargetClassifier.ShouldInclude(true, true, true, true));
-        AssertFalse(AccessoryTargetClassifier.ShouldInclude(true, true, false, false));
+        AssertTrue(AccessoryTargetClassifier.ShouldInclude(true, true, false));
+        AssertFalse(AccessoryTargetClassifier.ShouldInclude(false, true, false));
+        AssertFalse(AccessoryTargetClassifier.ShouldInclude(true, false, false));
+        AssertFalse(AccessoryTargetClassifier.ShouldInclude(true, true, true));
     }
 
     private static void InteractionClothRootsIncludeAccessories()

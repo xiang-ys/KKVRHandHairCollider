@@ -145,10 +145,9 @@ namespace KKVRHandHairCollider.Core
         public static bool ShouldInclude(
             bool componentEnabled,
             bool hasPhysicsRoot,
-            bool isNativeBodyPhysics,
-            bool rootOwnedByAccessory)
+            bool isNativeBodyPhysics)
         {
-            return componentEnabled && hasPhysicsRoot && !isNativeBodyPhysics && rootOwnedByAccessory;
+            return componentEnabled && hasPhysicsRoot && !isNativeBodyPhysics;
         }
 
         public static bool IsNativeBodyPhysicsBoneName(string boneName)
@@ -164,7 +163,11 @@ namespace KKVRHandHairCollider.Core
                    boneName.StartsWith("cf_s_siri", StringComparison.OrdinalIgnoreCase) ||
                    boneName.IndexOf("siridam", StringComparison.OrdinalIgnoreCase) >= 0 ||
                    boneName.StartsWith("cf_j_hip", StringComparison.OrdinalIgnoreCase) ||
-                   boneName.StartsWith("cf_d_hip", StringComparison.OrdinalIgnoreCase);
+                   boneName.StartsWith("cf_d_hip", StringComparison.OrdinalIgnoreCase) ||
+                   boneName.StartsWith("cf_j_kokan", StringComparison.OrdinalIgnoreCase) ||
+                   boneName.StartsWith("cf_d_kokan", StringComparison.OrdinalIgnoreCase) ||
+                   boneName.StartsWith("cf_j_ana", StringComparison.OrdinalIgnoreCase) ||
+                   boneName.StartsWith("cf_d_ana", StringComparison.OrdinalIgnoreCase);
         }
     }
 
