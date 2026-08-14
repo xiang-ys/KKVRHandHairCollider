@@ -1,4 +1,4 @@
-# KKVR Hair and Clothing Interaction 0.6.4 validation
+# KKVR Hair and Clothing Interaction 1.0 validation
 
 ## Goal
 
@@ -8,16 +8,33 @@ Keep forces local and bounded, preserve existing garment physics data, reuse
 installed body colliders, add a bounded controller-grip interaction, and recover
 cleanly after contact. Breast and hip physics remain native and out of scope.
 
+## 1.0 release evidence
+
+- The focused Release test executable passes all 39 of 39 tests.
+- The `net35` Release build completes with 0 warnings and 0 errors.
+- Mono.Cecil inspection reports plugin version `1.0`, CLR `Net_2_0`, and I386
+  architecture.
+- The Release, installed, and repository-root DLL copies match SHA-256
+  `5EE18891FAA427CB407A7233F9DF849216DD0905A82FA422B6F8B7C9F065B7A5`.
+- BepInEx loaded `KKVR Hair and Clothing Interaction 1.0`; the VR process
+  remained responsive after startup and no plugin error was found in the log.
+- Both standard controller colliders and isolated garment controller colliders
+  were created for the left and right original-VR controllers.
+- The preceding attended 0.6.7 scene run used the same behavior code as 1.0 and
+  registered all 20 of 20 DynamicBone components on the observed mod garment.
+- Manual testing confirmed interaction on original skirts, mod skirts, and
+  physical accessories. The observed upper-skirt limitation was traced to the
+  garment's fixed DynamicBone roots and skin weights, not an unregistered chain.
+- Version 1.0 therefore connects the movable physics supplied by the game and
+  mods while preserving their existing solvers and authored physical limits.
+
 ## Implementation evidence
 
 - Clothing discovery is restricted to `ChaControl.objClothes` slots 0 and 1,
   matching the game's `Studio.AddObjectFemale.GetSkirtDynamic` boundary.
-- Skirt chains are recognized through the observed `cf_j_sk_*`, `cf_d_sk_*`,
-  `backsk`, and `spinesk` bone families. Bust, thigh, and accessory lookalikes
-  are rejected by focused tests.
-- Original-game bottom garments are also recognized through the
-  `ct_clothesBot` DynamicBone component marker used by KK_Colliders, even when
-  their root bones have custom names.
+- Every enabled, rooted DynamicBone component under the two clothing slots is
+  accepted, including mod garments with generic bone names. Exact native body
+  physics references remain excluded by component comments and bone families.
 - Physical accessories are discovered across the union of KKAPI accessory
   objects and live `cusAcsCmp` objects, covering modern MoreAccessories slots
   and load-time array reconstruction.
@@ -31,16 +48,18 @@ cleanly after contact. Breast and hip physics remain native and out of scope.
 - Physics roots rebound to character bones by clothes-to-accessory tools remain
   valid. Native breast, hip, groin, and anal body-physics chains are excluded
   by exact component comments and bone families.
-- A stationary controller applies a local outward skirt-contact push of at
-  most `0.006`, still subject to the existing per-chain `0.025` clothing cap.
+- A garment-only `0.065 m` controller collider broadens local multi-chain
+  contact without changing the standard `0.035 m` hair/accessory collider.
+- The optional whole-chain clothing force remains available with a stationary
+  push of at most `0.006` and a `0.025` cap, but is disabled by default.
 - Clothing scans emit one summary per changed top/bottom object signature,
-  including a bounded list of component/root names for unsupported modded
-  garments.
+  including a bounded list of component/root names for diagnosis.
 - All three installed DynamicBone variants are supported.
 - Controller contact uses at most 24 evenly distributed transforms per chain,
   preserving both endpoints and preventing unbounded per-frame work.
-- Skirt force has independent conservative defaults: strength `0.012`, maximum
-  force `0.025`, controller radius `0.035 m`, and contact shell `0.008 m`.
+- Accessories and garments use continuous bone-segment distance checks to avoid
+  gaps between sparse transform samples; hair preserves its established node
+  contact behavior.
 - Existing `KK_Colliders 1.3.1` thigh DynamicBoneColliders are reused. If they
   are absent, six compatible upper/lower-thigh capsules are created.
 - Unity Cloth receives separate trigger spheres through appended
@@ -242,17 +261,10 @@ This evidence predates clothing support and does not verify 0.6 skirt behavior.
 - Config: `Koikatu/BepInEx/config/local.kkvr.handhaircollider.cfg`
 - Source and tests: `_codex_updates/KKVRHandHairCollider`
 
-## Remaining runtime observation
+## Residual runtime limits
 
-For a later attended or scripted character-scene run, record these objective
-signals before making visual claims:
-
-1. controller DynamicBone and Unity Cloth spheres are created;
-2. detected skirt DynamicBone and Unity Cloth counts are nonzero for a known
-   physics-enabled outfit;
-3. controller/body/hand-to-skirt bindings are added once with no duplicates;
-4. a near-contact sweep moves the touched chain and a distant sweep does not;
-5. grip near a chain latches without a first-frame jump, follows within the
-   configured cap, and releases on button-up or maximum stretch;
-6. the chain returns after one quiet second without remaining raised;
-7. no plugin exceptions occur during outfit changes or scene unload.
+Visual response remains asset-dependent. A static mesh cannot react without an
+existing DynamicBone or Unity Cloth component. DynamicBone roots are fixed, and
+independent skirt chains do not provide cross-chain cloth constraints. Further
+improvement for those cases requires outfit-specific bone or skin-weight work,
+not broader generic controller force.

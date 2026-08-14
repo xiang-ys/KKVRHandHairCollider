@@ -18,7 +18,7 @@ namespace KKVRHandHairCollider
     {
         public const string Guid = "local.kkvr.handhaircollider";
         public const string Name = "KKVR Hair and Clothing Interaction";
-        public const string Version = "0.6.7";
+        public const string Version = "1.0";
 
         private const int MaximumContactSamplesPerTarget = 24;
 

@@ -1,13 +1,14 @@
-# KKVR Hand Hair Collider
+# KKVR Hair and Clothing Interaction
 
-This project is a local BepInEx plugin for the original `KoikatuVR.exe`.
-It makes tracked Quest/SteamVR controllers interact with hair, accessory, and
-skirt DynamicBone chains, plus clothing that already uses Unity Cloth. It does
-not require CharaStudio and does not replace either physics implementation.
+This BepInEx plugin connects tracked Quest/SteamVR controllers to the movable
+physics that the game and installed mods already provide: hair, physical
+accessories, skirt and garment DynamicBone chains, and clothing that uses Unity
+Cloth. The goal is to make all existing movable parts participate in controller
+interaction without replacing the original physics solvers.
 
-The current installed version is **0.6.4**. The project is experimental but
-has passed focused automated tests and a runtime smoke test in the local game
-installation.
+The current release is **1.0**. It has passed 39 focused automated tests,
+Release compilation, assembly inspection, startup smoke testing, and attended
+in-game testing with original and modded garments.
 
 This is an unofficial community project. It is not affiliated with or
 endorsed by Illusion. The game, BepInEx, VRTK, and DynamicBone are not included.
@@ -33,13 +34,14 @@ The current goal is **not** a new cloth solver, automatic physics for static
 meshes, per-particle pinning, or replacement body physics. Breast and hip
 physics remain owned by the game and installed physics plugins.
 
-Version 0.6.4 gives physical accessories their own adaptive contact profile.
-Short chains such as earrings receive a lower force cap, while longer tails,
-ribbons, and cape-like chains scale toward the configured full response. Both
-moving and stationary controller contact are supported, as is the existing
-bounded grip interaction. Disabled/no-shake components and native body physics
-remain untouched. Accessory and clothing scan summaries are written once per
-changed object signature for diagnosis after coordinate changes.
+Version 1.0 discovers all enabled DynamicBone variants under the game's hair,
+accessory, and top/bottom clothing objects. This includes mod garments with
+generic bone names. Short accessory chains receive a lower adaptive force cap;
+garments use a separate, wider local collision volume so additional skirt chains
+can respond without changing established hair behavior. Disabled/no-shake
+components and native breast/hip physics remain untouched. Accessory and
+clothing scan summaries are written once per changed object signature for
+diagnosis after coordinate changes.
 
 ## Installation
 
@@ -92,8 +94,9 @@ per configured scan interval and finds DynamicBone variants under:
 - `ChaControl.objHair`;
 - the union of KKAPI accessory objects and `ChaControl.cusAcsCmp` objects when
   accessory binding is enabled;
-- clothing slots 0 and 1 in `ChaControl.objClothes` when a chain contains a
-  recognized KK skirt bone.
+- clothing slots 0 and 1 in `ChaControl.objClothes`; every enabled, rooted
+  DynamicBone component is accepted unless it is recognized as native body
+  physics.
 
 The supported DynamicBone types are:
 
@@ -110,8 +113,11 @@ setting remains authoritative. Exact breast, hip, and other native body-physics
 chains are excluded.
 
 Bindings are planned by `BindingPlanner` and added only when the pair does not
-already exist. Existing `KK_Colliders` thigh colliders are reused. If none are
-present, compatible upper/lower-thigh capsules are created as a fallback.
+already exist. Hair and accessories retain the standard `0.035 m` controller
+sphere. Garments receive an isolated `0.065 m` controller sphere, improving
+local multi-chain contact without widening or strengthening hair interaction.
+Existing `KK_Colliders` thigh colliders are reused. If none are present,
+compatible upper/lower-thigh capsules are created as a fallback.
 `ColliderSourceSelector` keeps tracked controller colliders as the default
 source and can optionally include existing `KK_Colliders` hand, forearm, and
 upper-arm colliders. Breast, hip, and leg collider names are not accepted by
@@ -134,8 +140,9 @@ DynamicBone option.
 
 `ControllerMotionState` samples controller movement and smooths velocity.
 Contact distance is measured against up to 24 evenly distributed transforms
-from each chain instead of only its tip. This catches skirt and long-hair
-contact near the middle while bounding per-frame collision work.
+from each chain instead of only its tip. Accessories and garments additionally
+measure the continuous segments between sampled bones, preventing gaps between
+widely spaced nodes while bounding per-frame work.
 `ForceFieldMath` computes a bounded force using these rules:
 
 - below the minimum speed: no force;
@@ -150,8 +157,11 @@ is restored. After one quiet second, `ResetParticlesPosition()` is called to
 recover from a possible raised/stuck hair state. Scene changes and plugin
 disable/destroy also clear transient force.
 
-Skirt chains use independent conservative defaults: strength `0.012` and
-maximum force `0.025`, below the hair defaults of `0.018` and `0.04`.
+Skirt chains have an optional whole-chain force fallback with independent
+conservative defaults: strength `0.012` and maximum force `0.025`, below the
+hair defaults of `0.018` and `0.04`. It is disabled by default because local
+garment collision produces a more natural response and avoids moving an entire
+chain when only one area is touched.
 Accessories use strength `0.015`, maximum force `0.030`, stationary push
 `0.006`, and a `0.012 m` contact shell. Chain span scales the first three values
 from 65% for very short accessories to 100% at `0.30 m` and above.
@@ -179,7 +189,7 @@ likely to pass through the skull.
 
 ## Current Configuration
 
-The live configuration is migrated to tuning version `6` with these values:
+The live configuration is migrated to tuning version `7` with these values:
 
 ```ini
 [Controller collision]
@@ -199,7 +209,7 @@ Enabled = true
 Include accessory Dynamic Bones = true
 Include skirt Dynamic Bones = true
 Scan interval seconds = 1
-Tuning version = 6
+Tuning version = 7
 
 [Accessory force]
 Enabled = true
@@ -209,10 +219,13 @@ Stationary contact push = 0.006
 Contact padding meters = 0.012
 
 [Clothing force]
-Enabled = true
+Enabled = false
 Strength = 0.012
 Maximum force = 0.025
 Stationary contact push = 0.006
+
+[Clothing collision]
+Radius meters = 0.065
 
 [Grab interaction]
 Enabled = true
@@ -257,7 +270,7 @@ Run from the repository root:
 dotnet run --project '.\tests\KKVRHandHairCollider.Tests.csproj' -p:GameDir='D:\Games\Koikatu'
 ```
 
-The current suite has **36 passing tests** covering:
+The current suite has **39 passing tests** covering:
 
 - both-controller binding cross-product;
 - skipping existing bindings;
@@ -280,6 +293,9 @@ The current suite has **36 passing tests** covering:
 - nearest-point force across a sampled chain;
 - invalid physics-input rejection;
 - contact sample endpoint preservation and the 24-point budget;
+- continuous segment projection for physical accessories and garments;
+- generic mod-garment discovery without skirt-specific bone names;
+- isolation of the wider garment collider from hair and accessories;
 - no-snap grab latching, bounded pulling, and maximum-stretch release;
 - exact reuse and exclusion rules for character arm colliders;
 - real `KK_Colliders_*` name recognition and skirt arm-collider exclusion;
@@ -298,7 +314,7 @@ claimed.
 dotnet build '.\src\KKVRHandHairCollider.csproj' -c Release -p:GameDir='D:\Games\Koikatu'
 ```
 
-The 0.6.4 release build targeted `net35` and completed with 0 warnings and 0
+The 1.0 release build targets `net35` and completes with 0 warnings and 0
 errors. Assembly inspection confirmed CLR runtime `v2.0.50727` and the expected
 game, BepInEx, KKAPI, Unity, and framework references.
 
@@ -313,11 +329,13 @@ dotnet build '.\src\KKVRHandHairCollider.csproj' -c Release
 
 ### Runtime smoke test
 
-The 0.6.4 startup evidence is recorded in `VALIDATION.md`. It verifies the
-deployed binary, tuning migration, and loader/startup path. Ten repeated test
-runs also exercised 1,000,000 randomized accessory contact samples without a
-failure. The unattended startup did not enter a character scene, so exact
-per-accessory visual response is not claimed as runtime-observed.
+Detailed historical evidence is recorded in `VALIDATION.md`. The 1.0 candidate
+was also tested in an attended character scene: the plugin registered all 20 of
+20 DynamicBone components on the observed mod garment, created isolated left
+and right garment colliders, and loaded without plugin errors. Manual testing
+confirmed controller response on original skirts, mod skirts, and physical
+accessories. Visual quality remains constrained by each asset's authored bone
+hierarchy and skin weights.
 
 The unattended 0.6.2 startup smoke tests showed:
 
@@ -369,13 +387,22 @@ local and returns cleanly. This is not claimed by the unattended startup test.
 
 ## Known Limitations
 
-- Only accessories or clothing with existing DynamicBone or Unity Cloth
-  physics can react; static skinned meshes are intentionally unchanged.
+- Only hair, accessories, or clothing with existing DynamicBone or Unity Cloth
+  physics can react. Version 1.0 connects the movable parts supplied by the game
+  and mods; it does not invent physics for static meshes.
 - The force field is per DynamicBone component, not a fully local per-particle
   hand solver. A single chain may therefore respond more broadly than the
   exact touched strands.
-- Skirt identification is limited to clothing slots 0/1 and known KK skirt
-  bone names; unusual mod naming may require another pattern.
+- Garment discovery is limited to top/bottom clothing slots 0/1. Physics placed
+  elsewhere by an unusual mod is treated according to that object's actual
+  category, such as an accessory.
+- DynamicBone roots are fixed anchors. If a garment author weights the upper
+  skirt to fixed roots or body bones and only the hem to dynamic children, the
+  hem can react while the upper fabric remains static. Correcting that requires
+  asset-specific bone and skin-weight authoring, outside this generic plugin.
+- Separate skirt chains have no cross-chain cloth constraints. The wider local
+  garment collider can contact adjacent chains, but cannot reconstruct a true
+  continuous cloth surface.
 - Grip interaction pulls an entire DynamicBone component through its existing
   force field; it is not VRChat's per-particle posing, friction, or cloth tear.
 - No automated visual/headset test exists; runtime visual strength remains a
@@ -394,17 +421,18 @@ It provides:
 - `UnityEngine.Cloth` in `UnityEngine.dll`, but no direct clothing `Cloth`
   fields or methods were found in `Assembly-CSharp.dll`.
 
-Version 0.6 implements both observed paths:
+Version 1.0 implements both observed paths:
 
-1. standard and modded skirt DynamicBone discovery in clothing slots 0/1;
+1. standard and modded garment DynamicBone discovery in clothing slots 0/1,
+   including generic mod bone names;
 2. controller, optional character-hand, and thigh-collider binding;
 3. reuse of `KK_Colliders` leg capsules with compatible fallback creation;
-4. a lower capped skirt force using chain-wide contact samples;
+4. continuous bone-segment contact and a garment-only wider collision volume;
 5. non-destructive controller sphere appends for existing Unity Cloth.
 
-Automated behavior and startup compatibility are verified. Outfit-by-outfit
-runtime binding counts and headset visuals remain unobserved for 0.6.2 and must
-not be reported as verified.
+Automated behavior, startup compatibility, and representative original/mod
+garment interaction are verified. Results still vary by outfit because the
+plugin preserves each asset's existing solver, bones, and skin weights.
 
 The repository-root `KKVRHandHairCollider.dll` is an ignored convenience copy.
 Release preparation refreshes it from the same verified build as the deployed
