@@ -18,7 +18,7 @@ namespace KKVRHandHairCollider
     {
         public const string Guid = "local.kkvr.handhaircollider";
         public const string Name = "KKVR Hair and Clothing Interaction";
-        public const string Version = "0.6.5";
+        public const string Version = "0.6.6";
 
         private const int MaximumContactSamplesPerTarget = 24;
 
@@ -855,9 +855,9 @@ namespace KKVRHandHairCollider
             if (!controller.IsAvailable)
                 return Vector3.zero;
 
-            Transform closestSample;
+            Vector3 closestPosition;
             float distance;
-            if (!target.TryGetClosestSample(controller.Position, out closestSample, out distance))
+            if (!target.TryGetClosestContact(controller.Position, out closestPosition, out distance))
                 return Vector3.zero;
 
             var magnitude = ContactPushMath.ComputeMagnitude(
@@ -869,7 +869,7 @@ namespace KKVRHandHairCollider
             if (magnitude <= 0f || distance <= 0f)
                 return Vector3.zero;
 
-            return (closestSample.position - controller.Position) / distance * magnitude;
+            return (closestPosition - controller.Position) / distance * magnitude;
         }
 
         private InteractionTuning GetInteractionProfile(DynamicBoneTarget target)
@@ -1423,11 +1423,50 @@ namespace KKVRHandHairCollider
             return LimitContactSamples(transforms);
         }
 
+        private static ContactSegment[] GetContactSegments(Transform root)
+        {
+            if (root == null)
+                return new ContactSegment[0];
+
+            var segments = new List<ContactSegment>();
+            AddContactSegments(root, segments);
+            return LimitContactSegments(segments);
+        }
+
+        private static ContactSegment[] GetContactSegments(IList<Transform> transforms)
+        {
+            var bones = transforms == null
+                ? new List<Transform>()
+                : transforms.Where(item => item != null).Distinct().ToList();
+            var knownBones = new HashSet<Transform>(bones);
+            var segments = bones
+                .Where(item => item.parent != null && knownBones.Contains(item.parent))
+                .Select(item => new ContactSegment(item.parent, item))
+                .ToList();
+
+            if (segments.Count == 0)
+            {
+                for (var index = 1; index < bones.Count; index++)
+                    segments.Add(new ContactSegment(bones[index - 1], bones[index]));
+            }
+            return LimitContactSegments(segments);
+        }
+
         private static void AddContactSamples(Transform current, ICollection<Transform> samples)
         {
             samples.Add(current);
             for (var index = 0; index < current.childCount; index++)
                 AddContactSamples(current.GetChild(index), samples);
+        }
+
+        private static void AddContactSegments(Transform current, ICollection<ContactSegment> segments)
+        {
+            for (var index = 0; index < current.childCount; index++)
+            {
+                var child = current.GetChild(index);
+                segments.Add(new ContactSegment(current, child));
+                AddContactSegments(child, segments);
+            }
         }
 
         private static Transform[] LimitContactSamples(IList<Transform> samples)
@@ -1442,6 +1481,30 @@ namespace KKVRHandHairCollider
             }
 
             return result.ToArray();
+        }
+
+        private static ContactSegment[] LimitContactSegments(IList<ContactSegment> segments)
+        {
+            var result = new List<ContactSegment>(MaximumContactSamplesPerTarget);
+            foreach (var sourceIndex in ContactSamplePlanner.PlanIndices(
+                         segments.Count,
+                         MaximumContactSamplesPerTarget))
+            {
+                result.Add(segments[sourceIndex]);
+            }
+            return result.ToArray();
+        }
+
+        private sealed class ContactSegment
+        {
+            public ContactSegment(Transform start, Transform end)
+            {
+                Start = start;
+                End = end;
+            }
+
+            public Transform Start { get; }
+            public Transform End { get; }
         }
 
         private sealed class SkirtColliderSpec
@@ -1487,6 +1550,7 @@ namespace KKVRHandHairCollider
             private readonly Action<DynamicBoneCollider> _add;
             private readonly Action<DynamicBoneCollider> _remove;
             private readonly Transform[] _contactSamples;
+            private readonly ContactSegment[] _contactSegments;
             private readonly Func<Vector3> _getForce;
             private readonly Action<Vector3> _setForce;
             private readonly Action _resetParticles;
@@ -1500,6 +1564,7 @@ namespace KKVRHandHairCollider
                 Action<DynamicBoneCollider> add,
                 Action<DynamicBoneCollider> remove,
                 Transform[] contactSamples,
+                ContactSegment[] contactSegments,
                 Func<Vector3> getForce,
                 Action<Vector3> setForce,
                 Action resetParticles,
@@ -1511,6 +1576,7 @@ namespace KKVRHandHairCollider
                 _add = add;
                 _remove = remove;
                 _contactSamples = contactSamples;
+                _contactSegments = contactSegments;
                 _getForce = getForce;
                 _setForce = setForce;
                 _resetParticles = resetParticles;
@@ -1528,8 +1594,47 @@ namespace KKVRHandHairCollider
 
             public bool TryGetMinimumDistance(Vector3 point, out float distance)
             {
-                Transform sample;
-                return TryGetClosestSample(point, out sample, out distance);
+                Vector3 closestPosition;
+                return TryGetClosestContact(point, out closestPosition, out distance);
+            }
+
+            public bool TryGetClosestContact(Vector3 point, out Vector3 closestPosition, out float distance)
+            {
+                if (Kind == InteractionTargetKind.Hair || _contactSegments.Length == 0)
+                {
+                    Transform sample;
+                    var foundSample = TryGetClosestSample(point, out sample, out distance);
+                    closestPosition = foundSample ? sample.position : Vector3.zero;
+                    return foundSample;
+                }
+
+                var minimumSquaredDistance = float.MaxValue;
+                closestPosition = Vector3.zero;
+                var found = false;
+                foreach (var segment in _contactSegments)
+                {
+                    if (segment.Start == null || segment.End == null)
+                        continue;
+
+                    SegmentProjection projection;
+                    if (!ContactSegmentMath.TryProject(
+                            ToContactVector(point),
+                            ToContactVector(segment.Start.position),
+                            ToContactVector(segment.End.position),
+                            out projection) ||
+                        projection.SquaredDistance >= minimumSquaredDistance)
+                        continue;
+
+                    minimumSquaredDistance = projection.SquaredDistance;
+                    closestPosition = new Vector3(
+                        projection.Point.X,
+                        projection.Point.Y,
+                        projection.Point.Z);
+                    found = true;
+                }
+
+                distance = found ? (float)Math.Sqrt(minimumSquaredDistance) : 0f;
+                return found;
             }
 
             public bool TryGetClosestSample(Vector3 point, out Transform closestSample, out float distance)
@@ -1599,6 +1704,7 @@ namespace KKVRHandHairCollider
                     bone,
                     bone.m_Colliders,
                     GetContactSamples(bone.m_Root),
+                    GetContactSegments(bone.m_Root),
                     () => bone.m_Force,
                     force => bone.m_Force = force,
                     bone.ResetParticlesPosition,
@@ -1613,6 +1719,7 @@ namespace KKVRHandHairCollider
                     bone,
                     bone.m_Colliders,
                     GetContactSamples(bone.m_Root),
+                    GetContactSegments(bone.m_Root),
                     () => bone.m_Force,
                     force => bone.m_Force = force,
                     bone.ResetParticlesPosition,
@@ -1623,12 +1730,14 @@ namespace KKVRHandHairCollider
             {
                 if (bone.Colliders == null)
                     bone.Colliders = new List<DynamicBoneCollider>();
+                var contactBones = bone.Bones == null
+                    ? new List<Transform>()
+                    : bone.Bones.Where(item => item != null).Distinct().ToList();
                 return Create(
                     bone,
                     bone.Colliders,
-                    LimitContactSamples(bone.Bones == null
-                        ? new List<Transform>()
-                        : bone.Bones.Where(item => item != null).Distinct().ToList()),
+                    LimitContactSamples(contactBones),
+                    GetContactSegments(contactBones),
                     () => bone.Force,
                     force => bone.Force = force,
                     bone.ResetParticlesPosition,
@@ -1639,6 +1748,7 @@ namespace KKVRHandHairCollider
                 MonoBehaviour bone,
                 IList<DynamicBoneCollider> colliders,
                 Transform[] contactSamples,
+                ContactSegment[] contactSegments,
                 Func<Vector3> getForce,
                 Action<Vector3> setForce,
                 Action resetParticles,
@@ -1652,10 +1762,16 @@ namespace KKVRHandHairCollider
                     colliders.Add,
                     collider => colliders.Remove(collider),
                     contactSamples,
+                    contactSegments,
                     getForce,
                     setForce,
                     resetParticles,
                     kind);
+            }
+
+            private static ContactVector3 ToContactVector(Vector3 value)
+            {
+                return new ContactVector3(value.x, value.y, value.z);
             }
 
             private static float CalculateChainSpan(IList<Transform> samples)

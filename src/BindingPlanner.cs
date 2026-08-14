@@ -406,6 +406,84 @@ namespace KKVRHandHairCollider.Core
         }
     }
 
+    public struct ContactVector3
+    {
+        public ContactVector3(float x, float y, float z)
+        {
+            X = x;
+            Y = y;
+            Z = z;
+        }
+
+        public float X { get; }
+        public float Y { get; }
+        public float Z { get; }
+    }
+
+    public struct SegmentProjection
+    {
+        public SegmentProjection(ContactVector3 point, float parameter, float squaredDistance)
+        {
+            Point = point;
+            Parameter = parameter;
+            SquaredDistance = squaredDistance;
+        }
+
+        public ContactVector3 Point { get; }
+        public float Parameter { get; }
+        public float SquaredDistance { get; }
+    }
+
+    public static class ContactSegmentMath
+    {
+        public static bool TryProject(
+            ContactVector3 point,
+            ContactVector3 start,
+            ContactVector3 end,
+            out SegmentProjection projection)
+        {
+            projection = default(SegmentProjection);
+            if (!IsFinite(point) || !IsFinite(start) || !IsFinite(end))
+                return false;
+
+            var segmentX = end.X - start.X;
+            var segmentY = end.Y - start.Y;
+            var segmentZ = end.Z - start.Z;
+            var segmentLengthSquared =
+                segmentX * segmentX + segmentY * segmentY + segmentZ * segmentZ;
+            var parameter = 0f;
+            if (segmentLengthSquared > 0.000000000001f)
+            {
+                parameter = ((point.X - start.X) * segmentX +
+                             (point.Y - start.Y) * segmentY +
+                             (point.Z - start.Z) * segmentZ) /
+                            segmentLengthSquared;
+                parameter = Math.Max(0f, Math.Min(1f, parameter));
+            }
+
+            var closest = new ContactVector3(
+                start.X + segmentX * parameter,
+                start.Y + segmentY * parameter,
+                start.Z + segmentZ * parameter);
+            var offsetX = point.X - closest.X;
+            var offsetY = point.Y - closest.Y;
+            var offsetZ = point.Z - closest.Z;
+            var squaredDistance = offsetX * offsetX + offsetY * offsetY + offsetZ * offsetZ;
+            if (float.IsNaN(squaredDistance) || float.IsInfinity(squaredDistance))
+                return false;
+
+            projection = new SegmentProjection(closest, parameter, squaredDistance);
+            return true;
+        }
+
+        private static bool IsFinite(ContactVector3 value)
+        {
+            return !float.IsNaN(value.X) && !float.IsInfinity(value.X) &&
+                   !float.IsNaN(value.Y) && !float.IsInfinity(value.Y) &&
+                   !float.IsNaN(value.Z) && !float.IsInfinity(value.Z);
+        }
+    }
+
     public static class ContactSamplePlanner
     {
         public static IList<int> PlanIndices(int sampleCount, int maximumSamples)
