@@ -4,6 +4,170 @@ using System.Linq;
 
 namespace KKVRHandHairCollider.Core
 {
+    public enum InteractionTargetKind
+    {
+        Hair,
+        Accessory,
+        Skirt
+    }
+
+    public struct InteractionTuning
+    {
+        public InteractionTuning(
+            float velocityStrength,
+            float maximumForce,
+            float contactPushStrength,
+            float contactPadding)
+        {
+            ValidateNonNegativeFinite(velocityStrength, nameof(velocityStrength));
+            ValidateNonNegativeFinite(maximumForce, nameof(maximumForce));
+            ValidateNonNegativeFinite(contactPushStrength, nameof(contactPushStrength));
+            if (float.IsNaN(contactPadding) || float.IsInfinity(contactPadding) || contactPadding <= 0f)
+                throw new ArgumentOutOfRangeException(nameof(contactPadding));
+
+            VelocityStrength = velocityStrength;
+            MaximumForce = maximumForce;
+            ContactPushStrength = contactPushStrength;
+            ContactPadding = contactPadding;
+        }
+
+        public float VelocityStrength { get; }
+        public float MaximumForce { get; }
+        public float ContactPushStrength { get; }
+        public float ContactPadding { get; }
+
+        public InteractionTuning ScaleForAccessory(float scale)
+        {
+            if (float.IsNaN(scale) || float.IsInfinity(scale) || scale < 0f || scale > 1f)
+                throw new ArgumentOutOfRangeException(nameof(scale));
+            return new InteractionTuning(
+                VelocityStrength * scale,
+                MaximumForce * scale,
+                ContactPushStrength * scale,
+                ContactPadding);
+        }
+
+        private static void ValidateNonNegativeFinite(float value, string parameterName)
+        {
+            if (float.IsNaN(value) || float.IsInfinity(value) || value < 0f)
+                throw new ArgumentOutOfRangeException(parameterName);
+        }
+    }
+
+    public static class InteractionProfilePlanner
+    {
+        private const float MinimumAccessoryScale = 0.65f;
+        private const float FullResponseSpan = 0.30f;
+
+        public static InteractionTuning Plan(
+            InteractionTargetKind kind,
+            float chainSpan,
+            InteractionTuning hair,
+            InteractionTuning accessory,
+            InteractionTuning skirt)
+        {
+            if (float.IsNaN(chainSpan) || float.IsInfinity(chainSpan) || chainSpan < 0f)
+                throw new ArgumentOutOfRangeException(nameof(chainSpan));
+
+            switch (kind)
+            {
+                case InteractionTargetKind.Hair:
+                    return hair;
+                case InteractionTargetKind.Accessory:
+                    var normalizedSpan = Math.Min(chainSpan / FullResponseSpan, 1f);
+                    return accessory.ScaleForAccessory(
+                        MinimumAccessoryScale + (1f - MinimumAccessoryScale) * normalizedSpan);
+                case InteractionTargetKind.Skirt:
+                    return skirt;
+                default:
+                    throw new ArgumentOutOfRangeException(nameof(kind));
+            }
+        }
+    }
+
+    public static class InteractionRootSelector
+    {
+        public static IList<T> Select<T>(
+            IEnumerable<T> primaryRoots,
+            IEnumerable<T> accessoryRoots,
+            bool includeAccessories)
+            where T : class
+        {
+            if (primaryRoots == null) throw new ArgumentNullException(nameof(primaryRoots));
+            if (accessoryRoots == null) throw new ArgumentNullException(nameof(accessoryRoots));
+
+            var result = new List<T>();
+            var known = new HashSet<T>();
+            AddUnique(primaryRoots, known, result);
+            if (includeAccessories)
+                AddUnique(accessoryRoots, known, result);
+            return result;
+        }
+
+        private static void AddUnique<T>(IEnumerable<T> source, HashSet<T> known, ICollection<T> result)
+            where T : class
+        {
+            foreach (var item in source)
+            {
+                if (item != null && known.Add(item))
+                    result.Add(item);
+            }
+        }
+    }
+
+    public static class AccessoryTargetClassifier
+    {
+        private static readonly HashSet<string> NativeBodyPhysicsComments =
+            new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+            {
+                "右胸",
+                "左胸",
+                "right breast",
+                "left breast",
+                "right butt",
+                "left butt"
+            };
+
+        public static bool IsNativeBodyPhysics(
+            string componentName,
+            string comment,
+            IEnumerable<string> boneNames)
+        {
+            if (NativeBodyPhysicsComments.Contains(comment ?? string.Empty))
+                return true;
+            if (IsNativeBodyPhysicsBoneName(componentName))
+                return true;
+            if (boneNames == null)
+                return false;
+            return boneNames.Any(IsNativeBodyPhysicsBoneName);
+        }
+
+        public static bool ShouldInclude(
+            bool componentEnabled,
+            bool hasPhysicsRoot,
+            bool isNativeBodyPhysics,
+            bool rootOwnedByAccessory)
+        {
+            return componentEnabled && hasPhysicsRoot && !isNativeBodyPhysics && rootOwnedByAccessory;
+        }
+
+        public static bool IsNativeBodyPhysicsBoneName(string boneName)
+        {
+            if (string.IsNullOrEmpty(boneName))
+                return false;
+
+            return boneName.StartsWith("cf_j_bust", StringComparison.OrdinalIgnoreCase) ||
+                   boneName.StartsWith("cf_d_bust", StringComparison.OrdinalIgnoreCase) ||
+                   boneName.StartsWith("cf_s_bust", StringComparison.OrdinalIgnoreCase) ||
+                   boneName.StartsWith("cf_j_siri", StringComparison.OrdinalIgnoreCase) ||
+                   boneName.StartsWith("cf_d_siri", StringComparison.OrdinalIgnoreCase) ||
+                   boneName.StartsWith("cf_s_siri", StringComparison.OrdinalIgnoreCase) ||
+                   boneName.IndexOf("siridam", StringComparison.OrdinalIgnoreCase) >= 0 ||
+                   boneName.StartsWith("cf_j_hip", StringComparison.OrdinalIgnoreCase) ||
+                   boneName.StartsWith("cf_d_hip", StringComparison.OrdinalIgnoreCase);
+        }
+    }
+
     public sealed class BindingPair : IEquatable<BindingPair>
     {
         public BindingPair(string dynamicBoneId, string colliderId)

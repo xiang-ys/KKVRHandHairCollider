@@ -27,6 +27,7 @@ internal static class Program
         Run("stationary skirt contact produces a bounded push", StationarySkirtContactProducesBoundedPush);
         Run("accessories receive an independent adaptive interaction profile", AccessoriesReceiveAdaptiveProfile);
         Run("accessory targets exclude native breast and hip physics", AccessoryTargetsExcludeNativeBodyPhysics);
+        Run("accessory eligibility respects no-shake roots and ownership", AccessoryEligibilityRespectsBoundaries);
         Run("interaction cloth roots include every accessory slot", InteractionClothRootsIncludeAccessories);
         Run("accessory contact simulation stays bounded across chain sizes", AccessoryContactSimulationStaysBounded);
         Run("force uses the nearest sampled chain point", ForceUsesNearestChainPoint);
@@ -232,6 +233,15 @@ internal static class Program
             "ct_accessory", null, new[] { "earring_root", "earring_tip" }));
         AssertFalse(AccessoryTargetClassifier.IsNativeBodyPhysics(
             "tail_dynamic", null, new[] { "tail_00", "tail_01" }));
+    }
+
+    private static void AccessoryEligibilityRespectsBoundaries()
+    {
+        AssertTrue(AccessoryTargetClassifier.ShouldInclude(true, true, false, true));
+        AssertFalse(AccessoryTargetClassifier.ShouldInclude(false, true, false, true));
+        AssertFalse(AccessoryTargetClassifier.ShouldInclude(true, false, false, true));
+        AssertFalse(AccessoryTargetClassifier.ShouldInclude(true, true, true, true));
+        AssertFalse(AccessoryTargetClassifier.ShouldInclude(true, true, false, false));
     }
 
     private static void InteractionClothRootsIncludeAccessories()
