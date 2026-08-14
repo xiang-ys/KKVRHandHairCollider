@@ -42,6 +42,7 @@ internal static class Program
         Run("recognizes reusable character arm colliders only", RecognizesReusableCharacterArmCollidersOnly);
         Run("recognizes real KK_Colliders names", RecognizesRealKkColliderNames);
         Run("skirt sources exclude character arm colliders", SkirtSourcesExcludeCharacterArmColliders);
+        Run("dedicated garment colliders never widen hair or accessories", DedicatedGarmentCollidersStayIsolated);
         Run("target registry removes disabled and missing targets", TargetRegistryRemovesDisabledAndMissingTargets);
         Run("Unity reference fallback treats destroyed objects as missing", UnityReferenceFallbackTreatsDestroyedObjectsAsMissing);
         Run("cloth binding sync removes stale managed pairs", ClothBindingSyncRemovesStaleManagedPairs);
@@ -496,6 +497,28 @@ internal static class Program
             new[] { "left-thigh", "right-thigh" });
 
         AssertValues(result, "left-controller", "right-controller", "left-thigh", "right-thigh");
+    }
+
+    private static void DedicatedGarmentCollidersStayIsolated()
+    {
+        var standard = new[] { "left-standard", "right-standard" };
+        var garment = new[] { "left-garment", "right-garment" };
+
+        AssertValues(
+            TargetControllerColliderSelector.Select(InteractionTargetKind.Hair, standard, garment),
+            "left-standard", "right-standard");
+        AssertValues(
+            TargetControllerColliderSelector.Select(InteractionTargetKind.Accessory, standard, garment),
+            "left-standard", "right-standard");
+        AssertValues(
+            TargetControllerColliderSelector.Select(InteractionTargetKind.Skirt, standard, garment),
+            "left-garment", "right-garment");
+        AssertValues(
+            TargetControllerColliderSelector.Select(
+                InteractionTargetKind.Skirt,
+                standard,
+                Array.Empty<string>()),
+            "left-standard", "right-standard");
     }
 
     private static void TargetRegistryRemovesDisabledAndMissingTargets()
