@@ -24,6 +24,7 @@ internal static class Program
         Run("recognizes standard and modded skirt bone names", RecognizesSkirtBoneNames);
         Run("recognizes the game's bottom-clothing skirt component", RecognizesBottomClothingSkirtComponent);
         Run("rejects non-skirt clothing bones", RejectsNonSkirtBoneNames);
+        Run("accepts generic mod garment physics without native body chains", AcceptsGenericModGarmentPhysics);
         Run("stationary skirt contact produces a bounded push", StationarySkirtContactProducesBoundedPush);
         Run("accessories receive an independent adaptive interaction profile", AccessoriesReceiveAdaptiveProfile);
         Run("accessory targets exclude native breast and hip physics", AccessoryTargetsExcludeNativeBodyPhysics);
@@ -180,6 +181,22 @@ internal static class Program
         AssertFalse(SkirtTargetClassifier.IsSkirtBoneName("cf_j_bust01_L"));
         AssertFalse(SkirtTargetClassifier.IsSkirtBoneName("cf_s_thigh01_L"));
         AssertFalse(SkirtTargetClassifier.IsSkirtBoneName("acc_sk_ribbon"));
+    }
+
+    private static void AcceptsGenericModGarmentPhysics()
+    {
+        AssertTrue(ClothingTargetClassifier.ShouldInclude(
+            true, true, "ct_clothesTop", null, new[] { "joint1", "joint2" }));
+        AssertTrue(ClothingTargetClassifier.ShouldInclude(
+            true, true, "ct_clothesBot", null, new[] { "cf_j_sk_00_00" }));
+        AssertFalse(ClothingTargetClassifier.ShouldInclude(
+            false, true, "ct_clothesTop", null, new[] { "joint1" }));
+        AssertFalse(ClothingTargetClassifier.ShouldInclude(
+            true, false, "ct_clothesTop", null, new[] { "joint1" }));
+        AssertFalse(ClothingTargetClassifier.ShouldInclude(
+            true, true, "ct_clothesTop", null, new[] { "cf_j_bust01_L" }));
+        AssertFalse(ClothingTargetClassifier.ShouldInclude(
+            true, true, "ct_clothesTop", "右胸", new[] { "joint1" }));
     }
 
     private static void StationarySkirtContactProducesBoundedPush()
