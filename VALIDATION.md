@@ -1,4 +1,4 @@
-# KKVR Hair and Clothing Interaction 0.6.3 validation
+# KKVR Hair and Clothing Interaction 0.6.4 validation
 
 ## Goal
 
@@ -18,6 +18,19 @@ cleanly after contact. Breast and hip physics remain native and out of scope.
 - Original-game bottom garments are also recognized through the
   `ct_clothesBot` DynamicBone component marker used by KK_Colliders, even when
   their root bones have custom names.
+- Physical accessories are discovered across the union of KKAPI accessory
+  objects and live `cusAcsCmp` objects, covering modern MoreAccessories slots
+  and load-time array reconstruction.
+- DynamicBone, DynamicBone_Ver01, DynamicBone_Ver02, and Unity Cloth components
+  below accessory objects all receive the corresponding controller contact
+  path. Disabled/no-shake components and rootless components are skipped.
+- Accessory motion has an independent adaptive profile. Short chains use 65%
+  of the configured strength/caps, scaling to full response at a `0.30 m` chain
+  span. Defaults are strength `0.015`, cap `0.030`, stationary push `0.006`,
+  and contact padding `0.012 m`.
+- Physics roots rebound to character bones by clothes-to-accessory tools remain
+  valid. Native breast, hip, groin, and anal body-physics chains are excluded
+  by exact component comments and bone families.
 - A stationary controller applies a local outward skirt-contact push of at
   most `0.006`, still subject to the existing per-chain `0.025` clothing cap.
 - Clothing scans emit one summary per changed top/bottom object signature,
@@ -62,6 +75,9 @@ cleanly after contact. Breast and hip physics remain native and out of scope.
 - VRChat PhysBones documentation informed explicit collider lists, grabbing,
   posing, maximum-stretch, and hand-collision semantics; no VRChat code was
   copied.
+- Current upstream KKAPI source confirms `GetAccessoryObjects` uses the
+  character accessory array. Current MoreAccessories source confirms it grows
+  both `objAccessory` and `cusAcsCmp`, supporting the runtime union used here.
 
 ## Automated evidence
 
@@ -77,8 +93,15 @@ cleanly after contact. Breast and hip physics remain native and out of scope.
   pair removal, immediate config rescan, and fallback-hand ownership remained
   green.
 - The 0.6.2 lifecycle result was 29 of 29 focused tests passing.
-- The 0.6.3 skirt-contact suite adds two regressions; current result is 31 of
-  31 focused tests passing.
+- The 0.6.3 skirt-contact suite added two regressions.
+- The 0.6.4 accessory-contact RED checkpoint is `8888577`; its tests reproduced
+  the missing accessory profile, body boundary, root-union, and simulation
+  behavior before implementation.
+- GREEN checkpoint `087a076` implemented adaptive accessory contact. Review
+  checkpoint `bd0c433` preserved clothes-to-accessory rebinding while retaining
+  native body exclusions.
+- Current result is 36 of 36 focused tests passing. Ten consecutive release
+  test runs exercised 1,000,000 randomized accessory samples with no failure.
 - There is no configured coverage collector for this net35 executable harness,
   so no percentage is claimed.
 
@@ -96,10 +119,9 @@ cleanly after contact. Breast and hip physics remain native and out of scope.
 - A further 100,000-point grab sweep verified zero force inside the dead zone,
   monotonic pull outside it, the `0.04` cap, and maximum-stretch release.
 - Release build: `net35`, 0 warnings, 0 errors.
-- Assembly inspection after deployment must show CLR `v2.0.50727`, plugin
-  version `0.6.2`, and only
-  expected `mscorlib`, BepInEx, Assembly-CSharp, UnityEngine, and System.Core
-  references.
+- Assembly inspection after deployment shows CLR `v2.0.50727`, plugin version
+  `0.6.4`, and expected `mscorlib`, BepInEx, Assembly-CSharp, UnityEngine,
+  System.Core, and KKAPI references.
 - Diff check passed. The repository scan found no credential-like values.
 
 ## Prior 0.6.1 runtime smoke evidence
@@ -171,6 +193,34 @@ The smoke run did not enter a character scene. The user's exact skirt visual
 response is therefore not claimed as runtime-verified; the next clothing scan
 will log recognized counts and component/root examples for direct diagnosis.
 
+## 0.6.4 runtime smoke evidence
+
+- The installed 0.6.3 DLL was preserved as
+  `KKVRHandHairCollider.0.6.3.dll.bak` with SHA-256
+  `72B9F8FAE24FA9BE42214A175435661372623242080FFC0C14CA3A398940772A`.
+- The 0.6.4 Release build, installed DLL, and repository-root copy all match
+  SHA-256
+  `AD628E416EC8AF9D199D2C3EDD8D9B00A8273E31309D62CC98927DF0E9DDB3E3`.
+- Assembly inspection reports version `0.6.4`, CLR `v2.0.50727`, and the
+  expected KKAPI dependency in addition to the prior references.
+- A normal `KoikatuVR.exe` startup remained alive for the 45-second observation
+  window. The exact final-hash binary then remained alive for a separate
+  30-second window and was stopped by the exact PID `37836` started for that
+  test.
+- BepInEx loaded `KKVR Hair and Clothing Interaction 0.6.4` exactly once in
+  each run. Plugin error, `TypeLoadException`, and `MissingMethodException`
+  counts were all zero.
+- The live config migrated to tuning version 6 and persisted the complete
+  `[Accessory force]` section.
+- A pre-existing JetPack dependency error for the legacy MoreAccessories GUID
+  remains in the wider mod environment; it is not emitted by this plugin.
+
+The unattended smoke run did not enter a character scene. Therefore live
+per-slot accessory counts and the user's exact headset-visible contact response
+are not claimed as runtime-observed. The next loaded-character scan will report
+registered, disabled/rootless, and native-body-excluded counts plus bounded
+component/root examples.
+
 ## Prior 0.5 scene baseline
 
 The previous version's interactive scene log remains useful as a regression
@@ -188,6 +238,7 @@ This evidence predates clothing support and does not verify 0.6 skirt behavior.
 - Plugin: `Koikatu/BepInEx/plugins/KKVRHandHairCollider/KKVRHandHairCollider.dll`
 - Backup: `Koikatu/BepInEx/plugins/KKVRHandHairCollider/KKVRHandHairCollider.0.5.0.dll.bak`
 - 0.6.0 backup: `Koikatu/BepInEx/plugins/KKVRHandHairCollider/KKVRHandHairCollider.0.6.0.dll.bak`
+- 0.6.3 backup: `Koikatu/BepInEx/plugins/KKVRHandHairCollider/KKVRHandHairCollider.0.6.3.dll.bak`
 - Config: `Koikatu/BepInEx/config/local.kkvr.handhaircollider.cfg`
 - Source and tests: `_codex_updates/KKVRHandHairCollider`
 
