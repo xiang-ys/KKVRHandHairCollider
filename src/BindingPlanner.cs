@@ -273,6 +273,32 @@ namespace KKVRHandHairCollider.Core
         }
     }
 
+    public static class TargetControllerColliderSelector
+    {
+        public static IList<T> Select<T>(
+            InteractionTargetKind kind,
+            IEnumerable<T> standardColliders,
+            IEnumerable<T> garmentColliders)
+            where T : class
+        {
+            if (standardColliders == null) throw new ArgumentNullException(nameof(standardColliders));
+            if (garmentColliders == null) throw new ArgumentNullException(nameof(garmentColliders));
+
+            var standard = standardColliders.Where(item => item != null).Distinct().ToList();
+            var garment = garmentColliders.Where(item => item != null).Distinct().ToList();
+            switch (kind)
+            {
+                case InteractionTargetKind.Hair:
+                case InteractionTargetKind.Accessory:
+                    return standard;
+                case InteractionTargetKind.Skirt:
+                    return garment.Count > 0 ? garment : standard;
+                default:
+                    throw new ArgumentOutOfRangeException(nameof(kind));
+            }
+        }
+    }
+
     public static class ForceFieldMath
     {
         public static float ComputeMagnitude(

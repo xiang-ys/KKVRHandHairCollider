@@ -18,7 +18,7 @@ namespace KKVRHandHairCollider
     {
         public const string Guid = "local.kkvr.handhaircollider";
         public const string Name = "KKVR Hair and Clothing Interaction";
-        public const string Version = "0.6.6";
+        public const string Version = "0.6.7";
 
         private const int MaximumContactSamplesPerTarget = 24;
 
@@ -52,6 +52,7 @@ namespace KKVRHandHairCollider
         private ConfigEntry<float> _clothingForceStrength;
         private ConfigEntry<float> _clothingMaximumForce;
         private ConfigEntry<float> _clothingContactPushStrength;
+        private ConfigEntry<float> _clothingColliderRadius;
         private ConfigEntry<bool> _grabEnabled;
         private ConfigEntry<float> _grabStrength;
         private ConfigEntry<float> _grabMaximumForce;
@@ -71,6 +72,8 @@ namespace KKVRHandHairCollider
         private bool _initialized;
         private DynamicBoneCollider _leftControllerCollider;
         private DynamicBoneCollider _rightControllerCollider;
+        private DynamicBoneCollider _leftGarmentControllerCollider;
+        private DynamicBoneCollider _rightGarmentControllerCollider;
         private SphereCollider _leftControllerClothCollider;
         private SphereCollider _rightControllerClothCollider;
         private readonly ControllerMotionState _leftControllerMotion = new ControllerMotionState();
@@ -118,10 +121,11 @@ namespace KKVRHandHairCollider
             _accessoryMaximumForce = Config.Bind("Accessory force", "Maximum force", 0.030f, new ConfigDescription("Base safety cap for long accessory chains; shorter chains use a lower cap.", new AcceptableValueRange<float>(0.005f, 0.15f)));
             _accessoryContactPushStrength = Config.Bind("Accessory force", "Stationary contact push", 0.006f, new ConfigDescription("Base outward push while a controller rests against a physical accessory.", new AcceptableValueRange<float>(0f, 0.05f)));
             _accessoryContactPadding = Config.Bind("Accessory force", "Contact padding meters", 0.012f, new ConfigDescription("Soft contact shell around the controller for accessory chains.", new AcceptableValueRange<float>(0.001f, 0.05f)));
-            _clothingForceEnabled = Config.Bind("Clothing force", "Enabled", true, "Apply conservative controller-velocity force to nearby physical clothing chains.");
+            _clothingForceEnabled = Config.Bind("Clothing force", "Enabled", false, "Optional whole-chain force fallback for garments that do not respond to local controller colliders.");
             _clothingForceStrength = Config.Bind("Clothing force", "Strength", 0.012f, new ConfigDescription("Force generated per meter/second for physical clothing chains.", new AcceptableValueRange<float>(0.002f, 0.10f)));
             _clothingMaximumForce = Config.Bind("Clothing force", "Maximum force", 0.025f, new ConfigDescription("Safety cap for force applied to one physical clothing Dynamic Bone.", new AcceptableValueRange<float>(0.005f, 0.15f)));
             _clothingContactPushStrength = Config.Bind("Clothing force", "Stationary contact push", 0.006f, new ConfigDescription("Bounded outward push while a controller rests against a physical clothing chain.", new AcceptableValueRange<float>(0f, 0.05f)));
+            _clothingColliderRadius = Config.Bind("Clothing collision", "Radius meters", 0.065f, new ConfigDescription("Radius of the dedicated local controller collider used only by physical garments.", new AcceptableValueRange<float>(0.04f, 0.12f)));
             _grabEnabled = Config.Bind("Grab interaction", "Enabled", true, "Hold the controller grip near hair, accessories, or skirt chains to pull them without replacing their physics.");
             _grabStrength = Config.Bind("Grab interaction", "Strength", 0.20f, new ConfigDescription("Bounded pull force per meter moved after a chain is grabbed.", new AcceptableValueRange<float>(0.02f, 1.0f)));
             _grabMaximumForce = Config.Bind("Grab interaction", "Maximum force", 0.04f, new ConfigDescription("Safety cap for grab force; skirt chains retain their lower clothing force cap.", new AcceptableValueRange<float>(0.01f, 0.15f)));
@@ -145,6 +149,7 @@ namespace KKVRHandHairCollider
             WatchForRescan(_headColliderEnabled);
             WatchForRescan(_skirtBodyCollidersEnabled);
             WatchForRescan(_unityClothEnabled);
+            WatchForRescan(_clothingColliderRadius);
             MigrateTuning();
             Config.Save();
             _initialized = true;
@@ -205,6 +210,14 @@ namespace KKVRHandHairCollider
                 _accessoryContactPadding.Value = 0.012f;
                 _tuningVersion.Value = 6;
                 Logger.LogMessage("Applied adaptive contact tuning for physical accessories.");
+            }
+
+            if (_tuningVersion.Value < 7)
+            {
+                _clothingForceEnabled.Value = false;
+                _clothingColliderRadius.Value = 0.065f;
+                _tuningVersion.Value = 7;
+                Logger.LogMessage("Applied local garment-collision tuning without global clothing force.");
             }
         }
 
@@ -303,8 +316,12 @@ namespace KKVRHandHairCollider
             var skirtBodyColliders = _skirtBodyCollidersEnabled.Value
                 ? EnsureSkirtBodyColliders(character)
                 : new List<DynamicBoneCollider>();
+            var garmentControllerColliders = TargetControllerColliderSelector.Select(
+                InteractionTargetKind.Skirt,
+                controllerColliders,
+                AvailableGarmentControllerColliders());
             var skirtColliders = ColliderSourceSelector.SelectForSkirt(
-                    controllerColliders,
+                    garmentControllerColliders,
                     skirtBodyColliders)
                 .Where(collider => collider != null)
                 .ToList();
@@ -499,6 +516,11 @@ namespace KKVRHandHairCollider
             {
                 AddControllerCollider(leftController, "L", ref _leftControllerCollider, result);
                 AddControllerCollider(rightController, "R", ref _rightControllerCollider, result);
+                if (_includeClothing.Value)
+                {
+                    EnsureGarmentControllerCollider(leftController, "L", ref _leftGarmentControllerCollider);
+                    EnsureGarmentControllerCollider(rightController, "R", ref _rightGarmentControllerCollider);
+                }
             }
             return result;
         }
@@ -575,12 +597,56 @@ namespace KKVRHandHairCollider
             collider.enabled = true;
         }
 
+        private void EnsureGarmentControllerCollider(
+            GameObject controller,
+            string side,
+            ref DynamicBoneCollider collider)
+        {
+            if (controller == null || controller.transform == null)
+                return;
+
+            var expectedName = $"KKVRHandHairCollider_GarmentController_{side}";
+            if (collider == null || collider.transform.parent != controller.transform)
+            {
+                collider = controller.GetComponentsInChildren<DynamicBoneCollider>(true)
+                    .FirstOrDefault(item => item.gameObject.name == expectedName);
+                if (collider == null)
+                {
+                    var colliderObject = new GameObject(expectedName);
+                    colliderObject.transform.SetParent(controller.transform, false);
+                    collider = colliderObject.AddComponent<DynamicBoneCollider>();
+                    Logger.LogMessage($"Created dedicated garment Dynamic Bone collider for controller {side} on {controller.name}.");
+                }
+            }
+
+            collider.m_Center = Vector3.zero;
+            collider.m_Radius = _clothingColliderRadius.Value;
+            collider.m_Height = 0f;
+            collider.m_Bound = DynamicBoneCollider.Bound.Outside;
+            collider.enabled = true;
+        }
+
+        private IList<DynamicBoneCollider> AvailableGarmentControllerColliders()
+        {
+            var result = new List<DynamicBoneCollider>(2);
+            if (_leftGarmentControllerCollider != null && _leftGarmentControllerCollider.enabled)
+                result.Add(_leftGarmentControllerCollider);
+            if (_rightGarmentControllerCollider != null && _rightGarmentControllerCollider.enabled)
+                result.Add(_rightGarmentControllerCollider);
+            return result;
+        }
+
         private void SetControllerColliderState(bool dynamicBoneEnabled, bool clothEnabled)
         {
             if (_leftControllerCollider != null)
                 _leftControllerCollider.enabled = dynamicBoneEnabled;
             if (_rightControllerCollider != null)
                 _rightControllerCollider.enabled = dynamicBoneEnabled;
+            var garmentEnabled = dynamicBoneEnabled && _includeClothing.Value;
+            if (_leftGarmentControllerCollider != null)
+                _leftGarmentControllerCollider.enabled = garmentEnabled;
+            if (_rightGarmentControllerCollider != null)
+                _rightGarmentControllerCollider.enabled = garmentEnabled;
             if (_leftControllerClothCollider != null)
                 _leftControllerClothCollider.enabled = clothEnabled;
             if (_rightControllerClothCollider != null)
