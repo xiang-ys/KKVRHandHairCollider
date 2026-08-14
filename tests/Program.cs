@@ -25,6 +25,10 @@ internal static class Program
         Run("recognizes the game's bottom-clothing skirt component", RecognizesBottomClothingSkirtComponent);
         Run("rejects non-skirt clothing bones", RejectsNonSkirtBoneNames);
         Run("stationary skirt contact produces a bounded push", StationarySkirtContactProducesBoundedPush);
+        Run("accessories receive an independent adaptive interaction profile", AccessoriesReceiveAdaptiveProfile);
+        Run("accessory targets exclude native breast and hip physics", AccessoryTargetsExcludeNativeBodyPhysics);
+        Run("interaction cloth roots include every accessory slot", InteractionClothRootsIncludeAccessories);
+        Run("accessory contact simulation stays bounded across chain sizes", AccessoryContactSimulationStaysBounded);
         Run("force uses the nearest sampled chain point", ForceUsesNearestChainPoint);
         Run("force rejects invalid physics inputs", ForceRejectsInvalidInputs);
         Run("trajectory simulation stays bounded and local", TrajectorySimulationStaysBoundedAndLocal);
@@ -187,6 +191,101 @@ internal static class Program
             ContactPushMath.ComputeMagnitude(float.NaN, 0.035f, 0.008f, 0.006f, 0.025f));
         AssertThrows<ArgumentOutOfRangeException>(() =>
             ContactPushMath.ComputeMagnitude(0.020f, 0.035f, 0f, 0.006f, 0.025f));
+    }
+
+    private static void AccessoriesReceiveAdaptiveProfile()
+    {
+        var hair = new InteractionTuning(0.018f, 0.040f, 0f, 0.008f);
+        var accessory = new InteractionTuning(0.015f, 0.030f, 0.006f, 0.012f);
+        var skirt = new InteractionTuning(0.012f, 0.025f, 0.006f, 0.008f);
+
+        var shortAccessory = InteractionProfilePlanner.Plan(
+            InteractionTargetKind.Accessory, 0f, hair, accessory, skirt);
+        var longAccessory = InteractionProfilePlanner.Plan(
+            InteractionTargetKind.Accessory, 0.30f, hair, accessory, skirt);
+        var hairProfile = InteractionProfilePlanner.Plan(
+            InteractionTargetKind.Hair, 1f, hair, accessory, skirt);
+        var skirtProfile = InteractionProfilePlanner.Plan(
+            InteractionTargetKind.Skirt, 1f, hair, accessory, skirt);
+
+        AssertNear(0.00975f, shortAccessory.VelocityStrength);
+        AssertNear(0.0195f, shortAccessory.MaximumForce);
+        AssertNear(0.0039f, shortAccessory.ContactPushStrength);
+        AssertNear(0.012f, shortAccessory.ContactPadding);
+        AssertNear(0.015f, longAccessory.VelocityStrength);
+        AssertNear(0.030f, longAccessory.MaximumForce);
+        AssertNear(0.006f, longAccessory.ContactPushStrength);
+        AssertNear(0.018f, hairProfile.VelocityStrength);
+        AssertNear(0f, hairProfile.ContactPushStrength);
+        AssertNear(0.025f, skirtProfile.MaximumForce);
+    }
+
+    private static void AccessoryTargetsExcludeNativeBodyPhysics()
+    {
+        AssertTrue(AccessoryTargetClassifier.IsNativeBodyPhysics(
+            "ct_accessory", null, new[] { "cf_j_bust01_L" }));
+        AssertTrue(AccessoryTargetClassifier.IsNativeBodyPhysics(
+            "ct_accessory", null, new[] { "cf_d_siri01_R" }));
+        AssertTrue(AccessoryTargetClassifier.IsNativeBodyPhysics(
+            "ct_accessory", "右胸", new[] { "custom_root" }));
+        AssertFalse(AccessoryTargetClassifier.IsNativeBodyPhysics(
+            "ct_accessory", null, new[] { "earring_root", "earring_tip" }));
+        AssertFalse(AccessoryTargetClassifier.IsNativeBodyPhysics(
+            "tail_dynamic", null, new[] { "tail_00", "tail_01" }));
+    }
+
+    private static void InteractionClothRootsIncludeAccessories()
+    {
+        AssertValues(
+            InteractionRootSelector.Select(
+                new[] { "top", "bottom", "top" },
+                new[] { "earring", "tail", "bottom" },
+                true),
+            "bottom", "earring", "tail", "top");
+        AssertValues(
+            InteractionRootSelector.Select(
+                new[] { "top", "bottom" },
+                new[] { "earring", "tail" },
+                false),
+            "bottom", "top");
+    }
+
+    private static void AccessoryContactSimulationStaysBounded()
+    {
+        var hair = new InteractionTuning(0.018f, 0.040f, 0f, 0.008f);
+        var accessory = new InteractionTuning(0.015f, 0.030f, 0.006f, 0.012f);
+        var skirt = new InteractionTuning(0.012f, 0.025f, 0.006f, 0.008f);
+        var random = new Random(20260814);
+
+        for (var index = 0; index < 100000; index++)
+        {
+            var span = (float)(random.NextDouble() * 1.5);
+            var distance = (float)(random.NextDouble() * 0.20);
+            var speed = (float)(random.NextDouble() * 8.0);
+            var profile = InteractionProfilePlanner.Plan(
+                InteractionTargetKind.Accessory, span, hair, accessory, skirt);
+            var velocity = ForceFieldMath.ComputeMagnitude(
+                speed,
+                profile.VelocityStrength,
+                profile.MaximumForce,
+                distance,
+                0.035f,
+                profile.ContactPadding,
+                0.15f);
+            var contact = ContactPushMath.ComputeMagnitude(
+                distance,
+                0.035f,
+                profile.ContactPadding,
+                profile.ContactPushStrength,
+                profile.MaximumForce);
+
+            AssertTrue(profile.VelocityStrength >= 0.00975f && profile.VelocityStrength <= 0.015f);
+            AssertTrue(profile.MaximumForce >= 0.0195f && profile.MaximumForce <= 0.030f);
+            AssertTrue(velocity >= 0f && velocity <= profile.MaximumForce);
+            AssertTrue(contact >= 0f && contact <= profile.MaximumForce);
+            if (distance >= 0.035f + profile.ContactPadding)
+                AssertNear(0f, contact);
+        }
     }
 
     private static void ForceUsesNearestChainPoint()
