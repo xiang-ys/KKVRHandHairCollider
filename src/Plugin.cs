@@ -78,6 +78,7 @@ namespace KKVRHandHairCollider
         private readonly HashSet<DynamicBoneCollider> _ownedHeadColliders = new HashSet<DynamicBoneCollider>();
         private readonly HashSet<DynamicBoneCollider> _ownedSkirtBodyColliders = new HashSet<DynamicBoneCollider>();
         private readonly HashSet<DynamicBoneCollider> _ownedFallbackHandColliders = new HashSet<DynamicBoneCollider>();
+        private readonly Dictionary<int, string> _clothingScanSignatures = new Dictionary<int, string>();
         private bool _controllerLookupWarningLogged;
         private bool _grabInputWarningLogged;
 
@@ -264,6 +265,7 @@ namespace KKVRHandHairCollider
                 return;
 
             var skirtTargets = FindSkirtTargets(character);
+            LogClothingScan(character, skirtTargets.Count);
             if (skirtTargets.Count == 0)
                 return;
 
@@ -1055,6 +1057,66 @@ namespace KKVRHandHairCollider
             }
 
             return result;
+        }
+
+        private void LogClothingScan(ChaControl character, int skirtTargetCount)
+        {
+            var clothes = character.objClothes;
+            if (clothes == null)
+                return;
+
+            var totalCount = 0;
+            var descriptions = new HashSet<string>(StringComparer.Ordinal);
+            var signatureParts = new List<string>();
+            var slotCount = Math.Min(2, clothes.Length);
+            for (var slot = 0; slot < slotCount; slot++)
+            {
+                var root = clothes[slot];
+                signatureParts.Add(root == null ? "null" : root.GetInstanceID().ToString());
+                if (root == null)
+                    continue;
+
+                foreach (var bone in root.GetComponentsInChildren<DynamicBone>(true))
+                {
+                    totalCount++;
+                    AddClothingDescription(descriptions, slot, bone.name, bone.m_Root == null ? null : bone.m_Root.name);
+                }
+
+                foreach (var bone in root.GetComponentsInChildren<DynamicBone_Ver01>(true))
+                {
+                    totalCount++;
+                    AddClothingDescription(descriptions, slot, bone.name, bone.m_Root == null ? null : bone.m_Root.name);
+                }
+
+                foreach (var bone in root.GetComponentsInChildren<DynamicBone_Ver02>(true))
+                {
+                    totalCount++;
+                    var firstBoneName = bone.Bones == null
+                        ? null
+                        : bone.Bones.Where(item => item != null).Select(item => item.name).FirstOrDefault();
+                    AddClothingDescription(descriptions, slot, bone.name, firstBoneName);
+                }
+            }
+
+            var sortedDescriptions = descriptions.OrderBy(item => item, StringComparer.Ordinal).ToArray();
+            var signature = string.Join(",", signatureParts.ToArray()) + ":" + totalCount + ":" +
+                            skirtTargetCount + ":" + string.Join("|", sortedDescriptions);
+            var characterId = character.GetInstanceID();
+            string previousSignature;
+            if (_clothingScanSignatures.TryGetValue(characterId, out previousSignature) && previousSignature == signature)
+                return;
+
+            _clothingScanSignatures[characterId] = signature;
+            var examples = sortedDescriptions.Take(12).ToArray();
+            var suffix = examples.Length == 0 ? string.Empty : $" Components: {string.Join(", ", examples)}.";
+            Logger.LogInfo($"Character {character.chaID}: clothing scan found {totalCount} Dynamic Bone components in top/bottom slots and recognized {skirtTargetCount} skirt targets.{suffix}");
+        }
+
+        private static void AddClothingDescription(HashSet<string> descriptions, int slot, string componentName, string rootName)
+        {
+            if (descriptions.Count >= 12)
+                return;
+            descriptions.Add($"slot{slot} {componentName ?? "<unnamed>"}/{rootName ?? "<no-root>"}");
         }
 
         private static bool ContainsSkirtBone(Transform root)

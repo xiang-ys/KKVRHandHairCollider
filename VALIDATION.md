@@ -1,4 +1,4 @@
-# KKVR Hair and Clothing Interaction 0.6.2 validation
+# KKVR Hair and Clothing Interaction 0.6.3 validation
 
 ## Goal
 
@@ -15,6 +15,14 @@ cleanly after contact. Breast and hip physics remain native and out of scope.
 - Skirt chains are recognized through the observed `cf_j_sk_*`, `cf_d_sk_*`,
   `backsk`, and `spinesk` bone families. Bust, thigh, and accessory lookalikes
   are rejected by focused tests.
+- Original-game bottom garments are also recognized through the
+  `ct_clothesBot` DynamicBone component marker used by KK_Colliders, even when
+  their root bones have custom names.
+- A stationary controller applies a local outward skirt-contact push of at
+  most `0.006`, still subject to the existing per-chain `0.025` clothing cap.
+- Clothing scans emit one summary per changed top/bottom object signature,
+  including a bounded list of component/root names for unsupported modded
+  garments.
 - All three installed DynamicBone variants are supported.
 - Controller contact uses at most 24 evenly distributed transforms per chain,
   preserving both endpoints and preventing unbounded per-frame work.
@@ -68,7 +76,9 @@ cleanly after contact. Breast and hip physics remain native and out of scope.
 - Refactor checkpoint `7a4afcc`: review-added lazy fallback, stricter dead Cloth
   pair removal, immediate config rescan, and fallback-hand ownership remained
   green.
-- Current result: 29 of 29 focused tests pass.
+- The 0.6.2 lifecycle result was 29 of 29 focused tests passing.
+- The 0.6.3 skirt-contact suite adds two regressions; current result is 31 of
+  31 focused tests passing.
 - There is no configured coverage collector for this net35 executable harness,
   so no percentage is claimed.
 
@@ -139,6 +149,27 @@ claimed as runtime-verified.
 The unattended runs did not enter a character scene, so live config-toggle
 reconciliation, outfit-change counts, controller grip behavior, and headset
 visuals remain unobserved. These are not claimed as runtime-verified.
+
+## 0.6.3 runtime smoke evidence
+
+- The installed 0.6.2 DLL was preserved as
+  `KKVRHandHairCollider.0.6.2.dll.bak` with SHA-256
+  `24A4F7366C1F42543765D2C1E8EC9B494AA9767C14665D63573659CC4513EB32`.
+- The 0.6.3 Release build, installed DLL, and repository-root copy all match
+  SHA-256
+  `72B9F8FAE24FA9BE42214A175435661372623242080FFC0C14CA3A398940772A`.
+- A normal `KoikatuVR.exe` startup remained alive for the 45-second observation
+  window and was stopped by the exact PID started for the smoke test.
+- The exact final source/build artifact then passed an additional 30-second
+  normal VR startup with the same zero-error result.
+- BepInEx loaded `KKVR Hair and Clothing Interaction 0.6.3` once. The plugin
+  emitted zero error, `TypeLoadException`, or `MissingMethodException` lines.
+- The live config migrated to tuning version 5 and persisted
+  `Stationary contact push = 0.006`.
+
+The smoke run did not enter a character scene. The user's exact skirt visual
+response is therefore not claimed as runtime-verified; the next clothing scan
+will log recognized counts and component/root examples for direct diagnosis.
 
 ## Prior 0.5 scene baseline
 

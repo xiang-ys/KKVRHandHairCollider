@@ -5,7 +5,7 @@ It makes tracked Quest/SteamVR controllers interact with hair, accessory, and
 skirt DynamicBone chains, plus clothing that already uses Unity Cloth. It does
 not require CharaStudio and does not replace either physics implementation.
 
-The current installed version is **0.6.2**. The project is experimental but
+The current installed version is **0.6.3**. The project is experimental but
 has passed focused automated tests and a runtime smoke test in the local game
 installation.
 
@@ -21,6 +21,8 @@ The current goal is:
 - bind those colliders to character hair, accessories, and detected skirt chains;
 - append separate controller spheres to existing Unity Cloth components;
 - apply a small velocity-based force only near the controller;
+- apply a smaller bounded outward force while a controller rests against a
+  detected skirt chain;
 - let a nearby controller grip latch and pull one sampled point without an
   initial snap, then release on button-up or excessive stretch;
 - keep hair from entering the character head with a head capsule collider;
@@ -30,6 +32,12 @@ The current goal is:
 The current goal is **not** a new cloth solver, automatic physics for static
 meshes, per-particle pinning, or replacement body physics. Breast and hip
 physics remain owned by the game and installed physics plugins.
+
+Version 0.6.3 also recognizes the original game's `ct_clothesBot` DynamicBone
+component marker. This covers bottom garments whose custom root-bone names do
+not use the normal `cf_j_sk_*` families. After a clothing change, one scan
+summary is written to `BepInEx/LogOutput.log`, including up to twelve component
+and root names when diagnosis is needed.
 
 ## Installation
 
@@ -276,6 +284,11 @@ dotnet build '.\src\KKVRHandHairCollider.csproj' -c Release
 ```
 
 ### Runtime smoke test
+
+The 0.6.3 startup evidence is recorded in `VALIDATION.md`. It verifies the
+deployed binary and loader/startup path; the user's exact skirt still requires
+the next in-headset scene to confirm its runtime component names and visual
+strength.
 
 The unattended 0.6.2 startup smoke tests showed:
 

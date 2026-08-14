@@ -183,6 +183,10 @@ internal static class Program
         AssertNear(0.003f, ContactPushMath.ComputeMagnitude(0.039f, 0.035f, 0.008f, 0.006f, 0.025f));
         AssertNear(0f, ContactPushMath.ComputeMagnitude(0.043f, 0.035f, 0.008f, 0.006f, 0.025f));
         AssertNear(0.025f, ContactPushMath.ComputeMagnitude(0.010f, 0.035f, 0.008f, 0.050f, 0.025f));
+        AssertThrows<ArgumentOutOfRangeException>(() =>
+            ContactPushMath.ComputeMagnitude(float.NaN, 0.035f, 0.008f, 0.006f, 0.025f));
+        AssertThrows<ArgumentOutOfRangeException>(() =>
+            ContactPushMath.ComputeMagnitude(0.020f, 0.035f, 0f, 0.006f, 0.025f));
     }
 
     private static void ForceUsesNearestChainPoint()
